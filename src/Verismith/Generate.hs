@@ -1,5 +1,11 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 -- |
@@ -22,19 +28,7 @@ module Verismith.Generate
 
     -- ** Data types
     EMIContext (..),
-    emiNewInputs,
     Context (..),
-    wires,
-    nonblocking,
-    blocking,
-    outofscope,
-    parameters,
-    modules,
-    nameCounter,
-    stmntDepth,
-    modDepth,
-    determinism,
-    emiContext,
     StateGen,
 
     -- ** Generate Functions
@@ -87,10 +81,12 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable (fold)
 import Data.Functor.Foldable (cata)
+import Data.Generics.Product (field)
 import Data.List (foldl', partition)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import GHC.Generics (Generic)
 import Hedgehog (Gen, GenT, MonadGen, Seed)
 import Hedgehog qualified as Hog
 import Hedgehog.Gen qualified as Hog
@@ -108,163 +104,146 @@ data ProbExpr = ProbExpr
     -- @4'ha@. This should never be set to 0, as it is used
     -- as a fallback in case there are no viable
     -- identifiers, such as none being in scope.
-    _probExprNum :: {-# UNPACK #-} !Int,
+    num :: {-# UNPACK #-} !Int,
     -- | @expr.variable@: probability of generating an identifier that is in
     -- scope and of the right type.
-    _probExprId :: {-# UNPACK #-} !Int,
+    id :: {-# UNPACK #-} !Int,
     -- | @expr.rangeselect@: probability of generating a range
     -- selection from a port (@reg1[2:0]@).
-    _probExprRangeSelect :: {-# UNPACK #-} !Int,
+    rangeSelect :: {-# UNPACK #-} !Int,
     -- | @expr.unary@: probability of generating a unary operator.
-    _probExprUnOp :: {-# UNPACK #-} !Int,
+    unOp :: {-# UNPACK #-} !Int,
     -- | @expr.binary@: probability of generation a binary operator.
-    _probExprBinOp :: {-# UNPACK #-} !Int,
+    binOp :: {-# UNPACK #-} !Int,
     -- | @expr.ternary@: probability of generating a conditional ternary
     -- operator.
-    _probExprCond :: {-# UNPACK #-} !Int,
+    cond :: {-# UNPACK #-} !Int,
     -- | @expr.concatenation@: probability of generating a concatenation.
-    _probExprConcat :: {-# UNPACK #-} !Int,
+    concat :: {-# UNPACK #-} !Int,
     -- | @expr.string@: probability of generating a string. This is not
     -- fully supported therefore currently cannot be set.
-    _probExprStr :: {-# UNPACK #-} !Int,
+    str :: {-# UNPACK #-} !Int,
     -- | @expr.signed@: probability of generating a signed function
     -- @$signed(...)@.
-    _probExprSigned :: {-# UNPACK #-} !Int,
+    signed :: {-# UNPACK #-} !Int,
     -- | @expr.unsigned@: probability of generating an unsigned function
     -- @$unsigned(...)@.
-    _probExprUnsigned :: {-# UNPACK #-} !Int
+    unsigned :: {-# UNPACK #-} !Int
   }
-  deriving (Eq, Show)
-
-makeLenses ''ProbExpr
+  deriving (Eq, Show, Generic)
 
 -- | Probability of generating different nodes inside a module declaration.
 data ProbModItem = ProbModItem
   { -- | @moditem.assign@: probability of generating an @assign@.
-    _probModItemAssign :: {-# UNPACK #-} !Int,
+    assign :: {-# UNPACK #-} !Int,
     -- | @moditem.sequential@: probability of generating a sequential @always@ block.
-    _probModItemSeqAlways :: {-# UNPACK #-} !Int,
+    seqAlways :: {-# UNPACK #-} !Int,
     -- | @moditem.combinational@: probability of generating an combinational @always@
     -- block. This is currently not implemented.
-    _probModItemCombAlways :: {-# UNPACK #-} !Int,
+    combAlways :: {-# UNPACK #-} !Int,
     -- | @moditem.instantiation@: probability of generating a module
     -- instantiation.
-    _probModItemInst :: {-# UNPACK #-} !Int
+    inst :: {-# UNPACK #-} !Int
   }
-  deriving (Eq, Show)
-
-makeLenses ''ProbModItem
+  deriving (Eq, Show, Generic)
 
 -- | Probability of generating different statements.
 data ProbStatement = ProbStatement
   { -- | @statement.blocking@: probability of generating blocking assignments.
-    _probStmntBlock :: {-# UNPACK #-} !Int,
+    block :: {-# UNPACK #-} !Int,
     -- | @statement.nonblocking@: probability of generating nonblocking assignments.
-    _probStmntNonBlock :: {-# UNPACK #-} !Int,
+    nonBlock :: {-# UNPACK #-} !Int,
     -- | @statement.conditional@: probability of generating conditional
     -- statements (@if@ statements).
-    _probStmntCond :: {-# UNPACK #-} !Int,
+    cond :: {-# UNPACK #-} !Int,
     -- | @statement.forloop@: probability of generating for loops.
-    _probStmntFor :: {-# UNPACK #-} !Int
+    for :: {-# UNPACK #-} !Int
   }
-  deriving (Eq, Show)
-
-makeLenses ''ProbStatement
+  deriving (Eq, Show, Generic)
 
 -- | Probability of generating various properties of a module.
 data ProbMod = ProbMod
   { -- | "@module.drop_output@: frequency of a wire or register being dropped from the output."
-    _probModDropOutput :: {-# UNPACK #-} !Int,
+    dropOutput :: {-# UNPACK #-} !Int,
     -- | "@module.keep_output@: frequency of a wire or register being kept in the output."
-    _probModKeepOutput :: {-# UNPACK #-} !Int
+    keepOutput :: {-# UNPACK #-} !Int
   }
-  deriving (Eq, Show)
-
-makeLenses ''ProbMod
+  deriving (Eq, Show, Generic)
 
 -- | @[probability]@: combined probabilities.
 data Probability = Probability
   { -- | Probabilities for module items.
-    _probModItem :: {-# UNPACK #-} !ProbModItem,
+    modItem :: {-# UNPACK #-} !ProbModItem,
     -- | Probabilities for statements.
-    _probStmnt :: {-# UNPACK #-} !ProbStatement,
+    stmnt :: {-# UNPACK #-} !ProbStatement,
     -- | Probaiblities for expressions.
-    _probExpr :: {-# UNPACK #-} !ProbExpr,
-    _probMod :: {-# UNPACK #-} !ProbMod
+    expr :: {-# UNPACK #-} !ProbExpr,
+    mod :: {-# UNPACK #-} !ProbMod
   }
-  deriving (Eq, Show)
-
-makeLenses ''Probability
+  deriving (Eq, Show, Generic)
 
 -- | @[property]@: properties for the generated Verilog file.
 data ConfProperty = ConfProperty
   { -- | @size@: the size of the generated Verilog.
-    _propSize :: {-# UNPACK #-} !Int,
+    size :: {-# UNPACK #-} !Int,
     -- | @seed@: a possible seed that could be used to
     -- generate the same Verilog.
-    _propSeed :: !(Maybe Seed),
+    seed :: !(Maybe Seed),
     -- | @statement.depth@: the maximum statement depth that should be
     -- reached.
-    _propStmntDepth :: {-# UNPACK #-} !Int,
+    stmntDepth :: {-# UNPACK #-} !Int,
     -- | @module.depth@: the maximium module depth that should be
     -- reached.
-    _propModDepth :: {-# UNPACK #-} !Int,
+    modDepth :: {-# UNPACK #-} !Int,
     -- | @module.max@: the maximum number of modules that are
     -- allowed to be created at each level.
-    _propMaxModules :: {-# UNPACK #-} !Int,
+    maxModules :: {-# UNPACK #-} !Int,
     -- | @sample.method@: the sampling method that should be used to
     -- generate specific distributions of random
     -- programs.
-    _propSampleMethod :: !Text,
+    sampleMethod :: !Text,
     -- | @sample.size@: the number of samples to take for the
     -- sampling method.
-    _propSampleSize :: {-# UNPACK #-} !Int,
+    sampleSize :: {-# UNPACK #-} !Int,
     -- | @output.combine@: if the output should be combined into one
     -- bit or not.
-    _propCombine :: !Bool,
+    combine :: !Bool,
     -- | @nondeterminism@: the frequency at which nondeterminism
     -- should be generated (currently a work in progress).
-    _propNonDeterminism :: {-# UNPACK #-} !Int,
+    nonDeterminism :: {-# UNPACK #-} !Int,
     -- | @determinism@: the frequency at which determinism should
     -- be generated (currently modules are always deterministic).
-    _propDeterminism :: {-# UNPACK #-} !Int,
+    determinism :: {-# UNPACK #-} !Int,
     -- | @default.yosys@: Default location for Yosys, which will be used for
     -- equivalence checking.
-    _propDefaultYosys :: !(Maybe Text)
+    defaultYosys :: !(Maybe Text)
   }
-  deriving (Eq, Show)
-
-makeLenses ''ConfProperty
+  deriving (Eq, Show, Generic)
 
 data Config = Config
-  { _configProbability :: {-# UNPACK #-} !Probability,
-    _configProperty :: {-# UNPACK #-} !ConfProperty
+  { probability :: {-# UNPACK #-} !Probability,
+    property :: {-# UNPACK #-} !ConfProperty
   }
-  deriving (Eq, Show)
-
-makeLenses ''Config
+  deriving (Eq, Show, Generic)
 
 data EMIContext = EMIContext
   { _emiNewInputs :: [Port]
   }
 
-makeLenses ''EMIContext
-
 data Context a = Context
-  { _wires :: [Port],
-    _nonblocking :: [Port],
-    _blocking :: [Port],
-    _outofscope :: [Port],
-    _parameters :: [Parameter],
-    _modules :: [ModDecl a],
-    _nameCounter :: {-# UNPACK #-} !Int,
-    _stmntDepth :: {-# UNPACK #-} !Int,
-    _modDepth :: {-# UNPACK #-} !Int,
-    _determinism :: !Bool,
-    _emiContext :: !(Maybe EMIContext)
+  { wires :: [Port],
+    nonblocking :: [Port],
+    blocking :: [Port],
+    outofscope :: [Port],
+    parameters :: [Parameter],
+    modules :: [ModDecl a],
+    nameCounter :: {-# UNPACK #-} !Int,
+    stmntDepth :: {-# UNPACK #-} !Int,
+    modDepth :: {-# UNPACK #-} !Int,
+    determinism :: !Bool,
+    emiContext :: !(Maybe EMIContext)
   }
-
-makeLenses ''Context
+  deriving (Generic)
 
 type StateGen a = ReaderT Config (GenT (State (Context a)))
 
@@ -319,7 +298,7 @@ lvalFromPort (Port _ _ _ i) = RegId i
 
 -- | Returns the probability from the configuration.
 probability :: Config -> Probability
-probability c = c ^. configProbability
+probability c = c.probability
 
 -- | Gets the current probabilities from the 'State'.
 askProbability :: StateGen ann Probability
@@ -399,25 +378,25 @@ constExprWithContext :: (MonadGen m) => [Parameter] -> ProbExpr -> Hog.Size -> m
 constExprWithContext ps prob size
   | size == 0 =
       Hog.frequency
-        [ (prob ^. probExprNum, ConstNum <$> genBitVec),
-          ( if null ps then 0 else prob ^. probExprId,
+        [ (prob.num, ConstNum <$> genBitVec),
+          ( if null ps then 0 else prob.id,
             ParamId . view paramIdent <$> Hog.element ps
           )
         ]
   | size > 0 =
       Hog.frequency
-        [ (prob ^. probExprNum, ConstNum <$> genBitVec),
-          ( if null ps then 0 else prob ^. probExprId,
+        [ (prob.num, ConstNum <$> genBitVec),
+          ( if null ps then 0 else prob.id,
             ParamId . view paramIdent <$> Hog.element ps
           ),
-          (prob ^. probExprUnOp, ConstUnOp <$> unOp <*> subexpr 2),
-          ( prob ^. probExprBinOp,
+          (prob.unOp, ConstUnOp <$> unOp <*> subexpr 2),
+          ( prob.binOp,
             ConstBinOp <$> subexpr 2 <*> binOp <*> subexpr 2
           ),
-          ( prob ^. probExprCond,
+          ( prob.cond,
             ConstCond <$> subexpr 2 <*> subexpr 2 <*> subexpr 2
           ),
-          ( prob ^. probExprConcat,
+          ( prob.concat,
             ConstConcat <$> Hog.nonEmpty (Hog.linear 0 10) (subexpr 2)
           )
         ]
@@ -428,22 +407,22 @@ constExprWithContext ps prob size
 -- | The list of safe 'Expr', meaning that these will not recurse and will end
 -- the 'Expr' generation.
 exprSafeList :: (MonadGen m) => ProbExpr -> [(Int, m Expr)]
-exprSafeList prob = [(prob ^. probExprNum, Number <$> genBitVec)]
+exprSafeList prob = [(prob.num, Number <$> genBitVec)]
 
 -- | List of 'Expr' that have the chance to recurse and will therefore not be
 -- used when the expression grows too large.
 exprRecList :: (MonadGen m) => ProbExpr -> (Hog.Size -> m Expr) -> [(Int, m Expr)]
 exprRecList prob subexpr =
-  [ (prob ^. probExprNum, Number <$> genBitVec),
-    ( prob ^. probExprConcat,
+  [ (prob.num, Number <$> genBitVec),
+    ( prob.concat,
       Concat <$> Hog.nonEmpty (Hog.linear 0 10) (subexpr 2)
     ),
-    (prob ^. probExprUnOp, UnOp <$> unOp <*> subexpr 2),
-    (prob ^. probExprStr, Str <$> Hog.text (Hog.linear 0 100) Hog.alphaNum),
-    (prob ^. probExprBinOp, BinOp <$> subexpr 2 <*> binOp <*> subexpr 2),
-    (prob ^. probExprCond, Cond <$> subexpr 2 <*> subexpr 2 <*> subexpr 2),
-    (prob ^. probExprSigned, Appl <$> pure "$signed" <*> subexpr 2),
-    (prob ^. probExprUnsigned, Appl <$> pure "$unsigned" <*> subexpr 2)
+    (prob.unOp, UnOp <$> unOp <*> subexpr 2),
+    (prob.str, Str <$> Hog.text (Hog.linear 0 100) Hog.alphaNum),
+    (prob.binOp, BinOp <$> subexpr 2 <*> binOp <*> subexpr 2),
+    (prob.cond, Cond <$> subexpr 2 <*> subexpr 2 <*> subexpr 2),
+    (prob.signed, Appl <$> pure "$signed" <*> subexpr 2),
+    (prob.unsigned, Appl <$> pure "$unsigned" <*> subexpr 2)
   ]
 
 -- | Select a random port from a list of ports and generate a safe bit selection
@@ -451,10 +430,10 @@ exprRecList prob subexpr =
 rangeSelect :: (MonadGen m) => [Parameter] -> [Port] -> m Expr
 rangeSelect ps ports = do
   p <- Hog.element ports
-  let s = calcRange ps (Just 32) $ _portSize p
+  let s = calcRange ps (Just 32) $ p ^. portSize
   msb <- Hog.int (Hog.constantFrom (s `div` 2) 0 (s - 1))
   lsb <- Hog.int (Hog.constantFrom (msb `div` 2) 0 msb)
-  return . RangeSelect (_portName p) $
+  return . RangeSelect (p ^. portName) $
     Range
       (fromIntegral msb)
       (fromIntegral lsb)
@@ -471,12 +450,12 @@ exprWithContext prob ps [] n
 exprWithContext prob ps l n
   | n == 0 =
       Hog.frequency $
-        (prob ^. probExprId, Id . fromPort <$> Hog.element l)
+        (prob.id, Id . fromPort <$> Hog.element l)
           : exprSafeList prob
   | n > 0 =
       Hog.frequency $
-        (prob ^. probExprId, Id . fromPort <$> Hog.element l)
-          : (prob ^. probExprRangeSelect, rangeSelect ps l)
+        (prob.id, Id . fromPort <$> Hog.element l)
+          : (prob.rangeSelect, rangeSelect ps l)
           : exprRecList prob subexpr
   | otherwise =
       exprWithContext prob ps l 0
@@ -495,16 +474,16 @@ someI m f = do
 makeIdentifier :: Text -> StateGen ann Identifier
 makeIdentifier prefix = do
   context <- get
-  let ident = Identifier $ prefix <> showT (context ^. nameCounter)
-  nameCounter += 1
+  let ident = Identifier $ prefix <> showT (context.nameCounter)
+  field @"nameCounter" += 1
   return ident
 
 newPort_ :: Bool -> PortType -> Identifier -> StateGen ann Port
 newPort_ blk pt ident = do
   p <- Port pt <$> Hog.bool <*> range <*> pure ident
   case pt of
-    Reg -> if blk then blocking %= (p :) else nonblocking %= (p :)
-    Wire -> wires %= (p :)
+    Reg -> if blk then field @"blocking" %= (p :) else field @"nonblocking" %= (p :)
+    Wire -> field @"wires" %= (p :)
   return p
 
 -- | Creates a new port based on the current name counter and adds it to the
@@ -525,9 +504,9 @@ newBPort = newPort_ True Reg
 getPort' :: Bool -> PortType -> Identifier -> StateGen ann (Maybe Port)
 getPort' blk pt i = do
   cont <- get
-  let b = _blocking cont
-  let nb = _nonblocking cont
-  let w = _wires cont
+  let b = cont.blocking
+  let nb = cont.nonblocking
+  let w = cont.wires
   let (c, nc) =
         case pt of
           Reg -> if blk then (b, nb <> w) else (nb, b <> w)
@@ -574,11 +553,11 @@ nextBPort i = try $ do
 
 allVariables :: StateGen ann [Port]
 allVariables =
-  fmap (\context -> _wires context <> _nonblocking context <> _blocking context) get
+  fmap (\context -> context.wires <> context.nonblocking <> context.blocking) get
 
 shareableVariables :: StateGen ann [Port]
 shareableVariables =
-  fmap (\context -> _wires context <> _nonblocking context) get
+  fmap (\context -> context.wires <> context.nonblocking) get
 
 -- | Generates an expression from variables that are currently in scope.
 scopedExpr_ :: [Port] -> StateGen ann Expr
@@ -586,7 +565,7 @@ scopedExpr_ vars = do
   context <- get
   prob <- askProbability
   Hog.sized
-    . exprWithContext (_probExpr prob) (_parameters context)
+    . exprWithContext prob.expr context.parameters
     $ vars
 
 scopedExprAll :: StateGen ann Expr
@@ -613,9 +592,9 @@ assignment blk = do
 -- | Generate a random 'Statement' safely, by also increasing the depth counter.
 seqBlock :: StateGen ann (Statement ann)
 seqBlock = do
-  stmntDepth -= 1
+  field @"stmntDepth" -= 1
   tstat <- SeqBlock <$> someI 20 statement
-  stmntDepth += 1
+  field @"stmntDepth" += 1
   return tstat
 
 -- | Generate a random conditional 'Statement'. The nameCounter is reset between
@@ -625,13 +604,13 @@ seqBlock = do
 conditional :: StateGen ann (Statement ann)
 conditional = do
   expr <- scopedExprAll
-  nc <- _nameCounter <$> get
+  nc <- use $ field @"nameCounter"
   tstat <- seqBlock
-  nc' <- _nameCounter <$> get
-  nameCounter .= nc
+  nc' <- use $ field @"nameCounter"
+  field @"nameCounter" .= nc
   fstat <- seqBlock
-  nc'' <- _nameCounter <$> get
-  nameCounter .= max nc' nc''
+  nc'' <- use $ field @"nameCounter"
+  field @"nameCounter" .= max nc' nc''
   return $ CondStmnt expr (Just tstat) (Just fstat)
 
 -- | Generate a random for loop by creating a new variable name for the counter
@@ -653,23 +632,22 @@ statement :: StateGen ann (Statement ann)
 statement = do
   prob <- askProbability
   cont <- get
-  let defProb i = prob ^. probStmnt . i
   Hog.frequency
-    [ (defProb probStmntBlock, BlockAssign <$> assignment True),
-      (defProb probStmntNonBlock, NonBlockAssign <$> assignment False),
-      (onDepth cont (defProb probStmntCond), conditional),
-      (onDepth cont (defProb probStmntFor), forLoop)
+    [ (prob.stmnt.block, BlockAssign <$> assignment True),
+      (prob.stmnt.nonBlock, NonBlockAssign <$> assignment False),
+      (onDepth cont prob.stmnt.cond, conditional),
+      (onDepth cont prob.stmnt.for, forLoop)
     ]
   where
-    onDepth c n = if c ^. stmntDepth > 0 then n else 0
+    onDepth c n = if c.stmntDepth > 0 then n else 0
 
 -- | Generate a sequential always block which is dependent on the clock.
 alwaysSeq :: StateGen ann (ModItem ann)
 alwaysSeq = do
   always <- Always . EventCtrl (EPosEdge "clk") . Just <$> seqBlock
-  blk <- fmap _blocking get
-  outofscope %= mappend blk
-  blocking .= []
+  blk <- use $ field @"blocking"
+  field @"outofscope" %= mappend blk
+  field @"blocking" .= []
   return always
 
 -- | Should resize a port that connects to a module port if the latter is
@@ -722,10 +700,10 @@ instantiate (ModDecl i outP inP _ _) = do
       | n == "clk" = False
       | otherwise = True
     process (p, t) r = do
-      params <- view parameters <$> get
+      params <- use $ field @"parameters"
       case t of
-        Reg -> nonblocking %= resizePort params p r
-        Wire -> wires %= resizePort params p r
+        Reg -> field @"nonblocking" %= resizePort params p r
+        Wire -> field @"wires" %= resizePort params p r
 
 -- | Generates a module instance by also generating a new module if there are
 -- not enough modules currently in the context. It keeps generating new modules
@@ -750,52 +728,50 @@ modInst :: StateGen ann (ModItem ann)
 modInst = do
   prob <- ask
   context <- get
-  let maxMods = prob ^. configProperty . propMaxModules
-  if length (context ^. modules) < maxMods
+  let maxMods = prob.property.maxModules
+  if length (context.modules) < maxMods
     then do
-      let currMods = context ^. modules
-      let params = context ^. parameters
-      let w = _wires context
-      let nb = _nonblocking context
-      let b = _blocking context
-      let oos = _outofscope context
-      modules .= []
-      wires .= []
-      nonblocking .= []
-      blocking .= []
-      outofscope .= []
-      parameters .= []
-      modDepth -= 1
+      let currMods = context.modules
+      let params = context.parameters
+      let w = context.wires
+      let nb = context.nonblocking
+      let b = context.blocking
+      let oos = context.outofscope
+      field @"modules" .= []
+      field @"wires" .= []
+      field @"nonblocking" .= []
+      field @"blocking" .= []
+      field @"outofscope" .= []
+      field @"parameters" .= []
+      field @"modDepth" -= 1
       chosenMod <- moduleDef Nothing
       ncont <- get
-      let genMods = ncont ^. modules
-      modDepth += 1
-      parameters .= params
-      wires .= w
-      nonblocking .= nb
-      blocking .= b
-      outofscope .= oos
-      modules .= chosenMod : currMods <> genMods
+      let genMods = ncont.modules
+      field @"modDepth" += 1
+      field @"parameters" .= params
+      field @"wires" .= w
+      field @"nonblocking" .= nb
+      field @"blocking" .= b
+      field @"outofscope" .= oos
+      field @"modules" .= chosenMod : currMods <> genMods
       instantiate chosenMod
-    else Hog.element (context ^. modules) >>= instantiate
+    else Hog.element (context.modules) >>= instantiate
 
 -- | Generate a random module item.
 modItem :: StateGen ann (ModItem ann)
 modItem = do
   conf <- ask
-  let prob = conf ^. configProbability
   context <- get
-  let defProb i = prob ^. probModItem . i
   det <-
     Hog.frequency
-      [ (conf ^. configProperty . propDeterminism, return True),
-        (conf ^. configProperty . propNonDeterminism, return False)
+      [ (conf.property.determinism, return True),
+        (conf.property.nonDeterminism, return False)
       ]
-  determinism .= det
+  field @"determinism" .= det
   Hog.frequency
-    [ (defProb probModItemAssign, ModCA <$> contAssign),
-      (defProb probModItemSeqAlways, alwaysSeq),
-      ( if context ^. modDepth > 0 then defProb probModItemInst else 0,
+    [ (conf.probability.modItem.assign, ModCA <$> contAssign),
+      (conf.probability.modItem.seqAlways, alwaysSeq),
+      ( if context.modDepth > 0 then conf.probability.modItem.inst else 0,
         modInst
       )
     ]
@@ -813,8 +789,8 @@ constExpr = do
   context <- get
   Hog.sized $
     constExprWithContext
-      (context ^. parameters)
-      (prob ^. probExpr)
+      (context.parameters)
+      (prob.expr)
 
 -- | Generate a random 'Parameter' and assign it to a constant expression which
 -- it will be initialised to. The assumption is that this constant expression
@@ -824,7 +800,7 @@ parameter = do
   ident <- makeIdentifier "param"
   cexpr <- constExpr
   let param = Parameter ident cexpr
-  parameters %= (param :)
+  field @"parameters" %= (param :)
   return param
 
 -- | Evaluate a range to an integer, and cast it back to a range.
@@ -877,17 +853,17 @@ moduleDef top = do
   context <- get
   vars <- shareableVariables
   config <- ask
-  let (newPorts, localPorts) = partition (`identElem` portList) $ vars <> _outofscope context
+  let (newPorts, localPorts) = partition (`identElem` portList) $ vars <> context.outofscope
   let size =
-        evalRange (_parameters context) 32
+        evalRange context.parameters 32
           . sum
           $ localPorts
             ^.. traverse
               . portSize
-  let (ProbMod n s) = config ^. configProbability . probMod
+  let (ProbMod n s) = config.probability.mod
   newlocal <- selectwfreq s n localPorts
   let clock = Port Wire False 1 "clk"
-  let combine = config ^. configProperty . propCombine
+  let combine = config.property.combine
   let yport =
         if combine then Port Wire False 1 "y" else Port Wire False size "y"
   let comb = combineAssigns_ combine yport newlocal
@@ -905,12 +881,11 @@ procedural top config = do
       runStateT
         (Hog.distributeT (runReaderT (moduleDef (Just $ Identifier top)) config))
         context
-  return . Verilog $ mainMod : st ^. modules
+  return . Verilog $ mainMod : st.modules
   where
     context =
-      Context [] [] [] [] [] [] 0 (confProp propStmntDepth) (confProp propModDepth) True Nothing
-    num = fromIntegral $ confProp propSize
-    confProp i = config ^. configProperty . i
+      Context [] [] [] [] [] [] 0 config.property.stmntDepth config.property.modDepth True Nothing
+    num = fromIntegral $ config.property.size
 
 -- | Samples the 'Gen' directly to generate random 'Verilog' using the 'Text' as
 -- the name of the main module and the configuration 'Config' to influence the
