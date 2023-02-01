@@ -1,0 +1,56 @@
+cabal-version:      3.4
+name:               libverismith
+version:            0.1.0.0
+-- synopsis:
+-- description:
+license:            GPL-3.0-only
+license-file:       LICENSE
+author:             Michalis Pardalos
+maintainer:         me@mpardalos.com
+-- copyright:
+category:           Testing
+build-type:         Simple
+-- extra-source-files:
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    exposed-modules: Verismith.Verilog
+                   , Verismith.Verilog.AST
+                   , Verismith.Verilog.BitVec
+                   , Verismith.Verilog.CodeGen
+                   , Verismith.Verilog.Distance
+                   , Verismith.Verilog.Eval
+                   , Verismith.Verilog.Internal
+                   , Verismith.Verilog.Lex
+                   , Verismith.Verilog.Mutate
+                   , Verismith.Verilog.Parser
+                   , Verismith.Verilog.Preprocess
+                   , Verismith.Verilog.Quote
+                   , Verismith.Verilog.Token
+                   , Verismith.Circuit
+                   , Verismith.Circuit.Base
+                   , Verismith.Circuit.Internal
+                   , Verismith.Circuit.Random
+    other-modules: Verismith.Internal
+    build-depends: lens >=4.16.1 && <5.2
+                 , deepseq >= 1.4.3.0 && <1.5
+                 , text >=1.2 && <1.3
+                 , recursion-schemes >=5.0.2 && <5.3
+                 , prettyprinter >=1.2.0.1 && <1.8
+                 , bytestring >=0.10 && <0.12
+                 , fgl >=5.6 && <5.8
+                 , random >=1.1 && <1.3
+                 , hedgehog >=1.0 && <1.2
+                 , mtl >=2.2.2 && <2.3
+                 , array >=0.5 && <0.6
+                 , parsec >=3.1 && <3.2
+                 , containers
+                 , template-haskell >=2.13.0 && <2.19
+    build-tool-depends: alex:alex >=3 && <4
+    build-depends:    base ^>=4.16.4.0
+    hs-source-dirs:   src
+    default-language: GHC2021
+    default-extensions: OverloadedStrings
