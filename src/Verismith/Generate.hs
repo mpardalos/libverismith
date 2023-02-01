@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -Wno-unused-imports #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 -- |
 -- Module      : Verismith.Generate
@@ -83,7 +83,6 @@ module Verismith.Generate
 where
 
 import Control.Lens hiding (Context)
-import Control.Monad (replicateM)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable (fold)
@@ -534,7 +533,7 @@ getPort' blk pt i = do
           Reg -> if blk then (b, nb <> w) else (nb, b <> w)
           Wire -> (w, b <> nb)
   case (filter portId c, filter portId nc) of
-    (_, x : _) -> return Nothing
+    (_, _ : _) -> return Nothing
     (x : _, []) -> return $ Just x
     ([], []) ->
       fmap
@@ -679,7 +678,7 @@ alwaysSeq = do
 resizePort :: [Parameter] -> Identifier -> Range -> [Port] -> [Port]
 resizePort ps i ra = foldl' func []
   where
-    func l p@(Port t _ ri i')
+    func l p@(Port _ _ ri i')
       | i' == i && calc ri < calc ra = (p & portSize .~ ra) : l
       | otherwise = p : l
     calc = calcRange ps $ Just 64
@@ -692,6 +691,7 @@ resizePort ps i ra = foldl' func []
 -- out the clock instead. I think that in general there should be a special
 -- representation for the clock.
 instantiate :: (ModDecl ann) -> StateGen ann (ModItem ann)
+instantiate (ModDeclAnn _ m) = instantiate m
 instantiate (ModDecl i outP inP _ _) = do
   vars <- shareableVariables
   outs <- replicateM (length outP) $ nextWirePort Nothing
@@ -877,22 +877,22 @@ moduleDef top = do
   context <- get
   vars <- shareableVariables
   config <- ask
-  let (newPorts, local) = partition (`identElem` portList) $ vars <> _outofscope context
+  let (newPorts, localPorts) = partition (`identElem` portList) $ vars <> _outofscope context
   let size =
         evalRange (_parameters context) 32
           . sum
-          $ local
+          $ localPorts
             ^.. traverse
               . portSize
   let (ProbMod n s) = config ^. configProbability . probMod
-  newlocal <- selectwfreq s n local
+  newlocal <- selectwfreq s n localPorts
   let clock = Port Wire False 1 "clk"
   let combine = config ^. configProperty . propCombine
   let yport =
         if combine then Port Wire False 1 "y" else Port Wire False size "y"
   let comb = combineAssigns_ combine yport newlocal
   return
-    . declareMod local
+    . declareMod localPorts
     . ModDecl name [yport] (clock : newPorts) (comb : mi)
     $ ps
 
