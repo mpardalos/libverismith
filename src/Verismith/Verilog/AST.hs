@@ -1,7 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -10,6 +8,10 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 -- |
 -- Module      : Verismith.Verilog.AST
@@ -24,8 +26,6 @@
 module Verismith.Verilog.AST
   ( -- * Top level types
     SourceInfo (..),
-    infoTop,
-    infoSrc,
     Verilog (..),
 
     -- * Primitives
@@ -43,115 +43,41 @@ module Verismith.Verilog.AST
 
     -- ** Task
     Task (..),
-    taskName,
-    taskExpr,
 
     -- ** Left hand side value
     LVal (..),
-    regId,
-    regExprId,
-    regExpr,
-    regSizeId,
-    regSizeRange,
-    regConc,
 
     -- ** Ports
     PortDir (..),
     PortType (..),
     Port (..),
-    portType,
-    portSigned,
-    portSize,
-    portName,
 
     -- * Expression
     Expr (..),
-    _Id,
     ConstExpr (..),
     ConstExprF (..),
     constToExpr,
     exprToConst,
     Range (..),
-    constNum,
-    constParamId,
-    constConcat,
-    constUnOp,
-    constPrim,
-    constLhs,
-    constBinOp,
-    constRhs,
-    constCond,
-    constTrue,
-    constFalse,
-    constStr,
 
     -- * Assignment
     Assign (..),
-    assignReg,
-    assignDelay,
-    assignExpr,
     ContAssign (..),
-    contAssignNetLVal,
-    contAssignExpr,
 
     -- ** Parameters
     Parameter (..),
-    paramIdent,
-    paramValue,
     LocalParam (..),
-    localParamIdent,
-    localParamValue,
 
     -- * Statment
     CaseType (..),
     CasePair (..),
     Statement (..),
-    statDelay,
-    statDStat,
-    statEvent,
-    statEStat,
-    statements,
-    stmntBA,
-    stmntNBA,
-    stmntTask,
-    stmntSysTask,
-    stmntCondExpr,
-    stmntCondTrue,
-    stmntCondFalse,
-    stmntCaseType,
-    stmntCaseExpr,
-    stmntCasePair,
-    stmntCaseDefault,
-    forAssign,
-    forExpr,
-    forIncr,
-    forStmnt,
 
     -- * Module
     ModDecl (..),
-    modId,
-    modOutPorts,
-    modInPorts,
-    modItems,
-    modParams,
-    _ModDeclAnn,
-    _ModDecl,
     ModItem (..),
-    modContAssign,
-    modInstId,
-    modInstName,
-    modInstConns,
-    _Initial,
-    _Always,
-    paramDecl,
-    localParamDecl,
     traverseModItem,
-    declDir,
-    declPort,
-    declVal,
     ModConn (..),
-    modConnName,
-    modExpr,
 
     -- * Useful Lenses and Traversals
     aModule,
@@ -163,14 +89,14 @@ module Verismith.Verilog.AST
 where
 
 import Control.DeepSeq (NFData)
-import Control.Lens hiding ((<|))
 import Data.Data
-import Data.Data.Lens
 import Data.Functor.Foldable.TH (makeBaseFunctor)
-import Data.List.NonEmpty ((<|), NonEmpty (..))
+import Data.List.NonEmpty (NonEmpty (..), (<|))
 import Data.String (IsString, fromString)
 import Data.Text (Text, pack)
 import GHC.Generics (Generic)
+import Optics (Lens', Traversal', lens, traversed, (%), (%~), (&), (^..))
+import Optics.TH
 import Verismith.Verilog.BitVec
 
 class Functor m => Annotations m where
@@ -185,7 +111,7 @@ class Functor m => Annotations m where
 newtype Identifier = Identifier {getIdentifier :: Text}
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeWrapped ''Identifier)
+makePrismLabels ''Identifier
 
 instance IsString Identifier where
   fromString = Identifier . pack
@@ -200,7 +126,7 @@ instance Monoid Identifier where
 newtype Delay = Delay {_getDelay :: Int}
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeWrapped ''Delay)
+makePrismLabels ''Delay
 
 instance Num Delay where
   Delay a + Delay b = Delay $ a + b
@@ -285,7 +211,7 @@ data ConstExpr
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''ConstExpr)
+makeFieldLabelsNoPrefix ''ConstExpr
 
 $(makeBaseFunctor ''ConstExpr)
 
@@ -331,9 +257,6 @@ instance Monoid ConstExpr where
 instance IsString ConstExpr where
   fromString = ConstStr . fromString
 
-instance Plated ConstExpr where
-  plate = uniplate
-
 -- | Range that can be associated with any port or left hand side. Contains the
 -- msb and lsb bits as 'ConstExpr'. This means that they can be generated using
 -- parameters, which can in turn be changed at synthesis time.
@@ -368,8 +291,8 @@ data Expr
   | Str {-# UNPACK #-} !Text
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''Expr)
-$(makePrisms ''Expr)
+makeFieldLabelsNoPrefix ''Expr
+makePrismLabels ''Expr
 
 $(makeBaseFunctor ''Expr)
 
@@ -394,9 +317,6 @@ instance Monoid Expr where
 instance IsString Expr where
   fromString = Str . fromString
 
-instance Plated Expr where
-  plate = uniplate
-
 -- | Verilog syntax for an event, such as @\@x@, which is used for always blocks
 data Event
   = EId {-# UNPACK #-} !Identifier
@@ -410,9 +330,6 @@ data Event
 
 $(makeBaseFunctor ''Event)
 
-instance Plated Event where
-  plate = uniplate
-
 -- | Task call, which is similar to function calls.
 data Task
   = Task
@@ -421,7 +338,7 @@ data Task
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''Task)
+makeFieldLabelsNoPrefix ''Task
 
 -- | Type that represents the left hand side of an assignment, which can be a
 -- concatenation such as in:
@@ -430,23 +347,19 @@ $(makeLenses ''Task)
 -- {a, b, c} = 32'h94238;
 -- @
 data LVal
-  = RegId
-      { _regId :: {-# UNPACK #-} !Identifier
-      }
+  = RegId {-# UNPACK #-} !Identifier
   | RegExpr
-      { _regExprId :: {-# UNPACK #-} !Identifier,
-        _regExpr :: !Expr
+      { regExprId :: {-# UNPACK #-} !Identifier,
+        regExpr :: !Expr
       }
   | RegSize
-      { _regSizeId :: {-# UNPACK #-} !Identifier,
-        _regSizeRange :: {-# UNPACK #-} !Range
+      { regSizeId :: {-# UNPACK #-} !Identifier,
+        regSizeRange :: {-# UNPACK #-} !Range
       }
-  | RegConcat
-      { _regConc :: [Expr]
-      }
+  | RegConcat [Expr]
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''LVal)
+makeFieldLabelsNoPrefix ''LVal
 
 instance IsString LVal where
   fromString = RegId . fromString
@@ -465,7 +378,7 @@ data PortType
   | Reg
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''PortType)
+makeFieldLabelsNoPrefix ''PortType
 
 -- | Port declaration. It contains information about the type of the port, the
 -- size, and the port name. It used to also contain information about if it was
@@ -477,14 +390,14 @@ $(makeLenses ''PortType)
 -- and input ports.
 data Port
   = Port
-      { _portType :: !PortType,
-        _portSigned :: !Bool,
-        _portSize :: {-# UNPACK #-} !Range,
-        _portName :: {-# UNPACK #-} !Identifier
+      { portType :: !PortType,
+        signed :: !Bool,
+        size :: {-# UNPACK #-} !Range,
+        name :: {-# UNPACK #-} !Identifier
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''Port)
+makeFieldLabelsNoPrefix ''Port
 
 -- | This is currently a type because direct module declaration should also be
 -- added:
@@ -502,7 +415,7 @@ data ModConn
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''ModConn)
+makeFieldLabelsNoPrefix ''ModConn
 
 data Assign
   = Assign
@@ -512,7 +425,7 @@ data Assign
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''Assign)
+makeFieldLabelsNoPrefix ''Assign
 
 -- | Type for continuous assignment.
 --
@@ -521,12 +434,12 @@ $(makeLenses ''Assign)
 -- @
 data ContAssign
   = ContAssign
-      { _contAssignNetLVal :: {-# UNPACK #-} !Identifier,
-        _contAssignExpr :: !Expr
+      { netLVal :: {-# UNPACK #-} !Identifier,
+        expr :: !Expr
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''ContAssign)
+makeFieldLabelsNoPrefix ''ContAssign
 
 -- | Case pair which contains an expression followed by a statement which will
 -- get executed if the expression matches the expression in the case statement.
@@ -591,18 +504,7 @@ data Statement a
   | StmntAnn a (Statement a)
   deriving (Eq, Show, Ord, Data, Functor, Generic, NFData)
 
-$(makeLenses ''Statement)
-
-instance Plated (Statement a) where
-  plate f (TimeCtrl d s) = TimeCtrl d <$> traverse f s
-  plate f (EventCtrl d s) = EventCtrl d <$> traverse f s
-  plate f (SeqBlock s) = SeqBlock <$> traverse f s
-  plate f (CondStmnt e s1 s2) = CondStmnt e <$> traverse f s1 <*> traverse f s2
-  plate f (StmntCase a b c d) =
-    StmntCase a b <$> traverse (traverseStmntCasePair f) c
-      <*> traverse f d
-  plate f (ForLoop a b c d) = ForLoop a b c <$> f d
-  plate _ a = pure a
+makeFieldLabelsNoPrefix ''Statement
 
 instance Semigroup (Statement a) where
   (SeqBlock a) <> (SeqBlock b) = SeqBlock $ a <> b
@@ -638,54 +540,54 @@ instance Annotations CasePair where
 -- | Parameter that can be assigned in blocks or modules using @parameter@.
 data Parameter
   = Parameter
-      { _paramIdent :: {-# UNPACK #-} !Identifier,
-        _paramValue :: ConstExpr
+      { ident :: {-# UNPACK #-} !Identifier,
+        value :: ConstExpr
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''Parameter)
+makeFieldLabelsNoPrefix ''Parameter
 
 -- | Local parameter that can be assigned anywhere using @localparam@. It cannot
 -- be changed by initialising the module.
 data LocalParam
   = LocalParam
-      { _localParamIdent :: {-# UNPACK #-} !Identifier,
-        _localParamValue :: ConstExpr
+      { ident :: {-# UNPACK #-} !Identifier,
+        value :: ConstExpr
       }
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
-$(makeLenses ''LocalParam)
+makeFieldLabelsNoPrefix ''LocalParam
 
 -- | Module item which is the body of the module expression.
 data ModItem a
-  = ModCA {_modContAssign :: !ContAssign}
+  = ModCA !ContAssign
   | ModInst
-      { _modInstId :: {-# UNPACK #-} !Identifier,
-        _modInstDecl :: [ModConn],
-        _modInstName :: {-# UNPACK #-} !Identifier,
-        _modInstConns :: [ModConn]
+      { instId :: {-# UNPACK #-} !Identifier,
+        instDecl :: [ModConn],
+        instName :: {-# UNPACK #-} !Identifier,
+        instConns :: [ModConn]
       }
   | Initial !(Statement a)
   | Always !(Statement a)
   | Property
-      { _moditemPropLabel :: {-# UNPACK #-} !Identifier,
-        _moditemPropEvent :: !Event,
-        _moditemPropBodyL :: Maybe Expr,
-        _moditemPropBodyR :: Expr
+      { propLabel :: {-# UNPACK #-} !Identifier,
+        propEvent :: !Event,
+        propBodyL :: Maybe Expr,
+        propBodyR :: Expr
       }
   | Decl
-      { _declDir :: !(Maybe PortDir),
-        _declPort :: !Port,
-        _declVal :: Maybe ConstExpr
+      { declDir :: !(Maybe PortDir),
+        declPort :: !Port,
+        declVal :: Maybe ConstExpr
       }
-  | ParamDecl {_paramDecl :: NonEmpty Parameter}
-  | LocalParamDecl {_localParamDecl :: NonEmpty LocalParam}
+  | ParamDecl (NonEmpty Parameter)
+  | LocalParamDecl (NonEmpty LocalParam)
   | ModItemAnn a (ModItem a)
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
-$(makePrisms ''ModItem)
+makePrismLabels ''ModItem
 
-$(makeLenses ''ModItem)
+makeFieldLabelsNoPrefix ''ModItem
 
 instance Annotations ModItem where
   removeAnn (ModItemAnn _ mi) = removeAnn mi
@@ -700,21 +602,20 @@ instance Annotations ModItem where
 -- | 'module' module_identifier [list_of_ports] ';' { module_item } 'end_module'
 data ModDecl a
   = ModDecl
-      { _modId :: {-# UNPACK #-} !Identifier,
-        _modOutPorts :: ![Port],
-        _modInPorts :: ![Port],
-        _modItems :: ![ModItem a],
-        _modParams :: ![Parameter]
+      { id :: {-# UNPACK #-} !Identifier,
+        outPorts :: ![Port],
+        inPorts :: ![Port],
+        items :: ![ModItem a],
+        params :: ![Parameter]
       }
   | ModDeclAnn a (ModDecl a)
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
-instance Plated (ModDecl a) where
-  plate f (ModDeclAnn b m) = ModDeclAnn b <$> plate f m
-  plate _ m = pure m
+infMod :: ModDecl Int
+infMod = ModDeclAnn 42 infMod
 
-$(makeLenses ''ModDecl)
-$(makePrisms ''ModDecl)
+makeFieldLabelsNoPrefix ''ModDecl
+makePrismLabels ''ModDecl
 
 instance Annotations ModDecl where
   removeAnn (ModDecl i out inp mis params) = ModDecl i out inp (fmap removeAnn mis) params
@@ -736,7 +637,7 @@ traverseModItem _ e = pure e
 newtype Verilog a = Verilog {getVerilog :: [ModDecl a]}
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
-$(makeWrapped ''Verilog)
+makePrismLabels ''Verilog
 
 instance Semigroup (Verilog a) where
   Verilog a <> Verilog b = Verilog $ a <> b
@@ -756,7 +657,7 @@ data SourceInfo a
       }
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
-$(makeLenses ''SourceInfo)
+makeFieldLabelsNoPrefix ''SourceInfo
 
 instance Semigroup (SourceInfo a) where
   (SourceInfo t v) <> (SourceInfo _ v2) = SourceInfo t $ v <> v2
@@ -785,11 +686,11 @@ data Annotation a
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
 getModule :: Traversal' (Verilog a) (ModDecl a)
-getModule = _Wrapped . traverse
+getModule = #_Verilog % traversed
 {-# INLINE getModule #-}
 
 getSourceId :: Traversal' (Verilog a) Text
-getSourceId = getModule . modId . _Wrapped
+getSourceId = getModule % #id % #_Identifier
 {-# INLINE getSourceId #-}
 
 -- | May need to change this to Traversal to be safe. For now it will fail when
@@ -798,13 +699,13 @@ aModule :: Identifier -> Lens' (SourceInfo a) (ModDecl a)
 aModule t = lens get_ set_
   where
     set_ (SourceInfo top main) v =
-      SourceInfo top (main & getModule %~ update (getIdentifier t) v)
+      SourceInfo top (main & getModule %~ update t.getIdentifier v)
     update top v m@(ModDecl (Identifier i) _ _ _ _)
       | i == top = v
       | otherwise = m
     update top v (ModDeclAnn _ m) = update top v m
     get_ (SourceInfo _ main) =
-      head . filter (f $ getIdentifier t) $ main ^.. getModule
+      head . filter (f t.getIdentifier) $ main ^.. getModule
     f top (ModDecl (Identifier i) _ _ _ _) = i == top
     f top (ModDeclAnn _ m) = f top m
 

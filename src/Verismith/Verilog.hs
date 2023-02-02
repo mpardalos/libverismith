@@ -32,75 +32,33 @@ module Verismith.Verilog
 
     -- ** Task
     Task (..),
-    taskName,
-    taskExpr,
 
     -- ** Left hand side value
     LVal (..),
-    regId,
-    regExprId,
-    regExpr,
-    regSizeId,
-    regSizeRange,
-    regConc,
 
     -- ** Ports
     PortDir (..),
     PortType (..),
     Port (..),
-    portType,
-    portSigned,
-    portSize,
-    portName,
 
     -- * Expression
     Expr (..),
     ConstExpr (..),
     constToExpr,
     exprToConst,
-    constNum,
 
     -- * Assignment
     Assign (..),
-    assignReg,
-    assignDelay,
-    assignExpr,
     ContAssign (..),
-    contAssignNetLVal,
-    contAssignExpr,
 
     -- * Statment
     Statement (..),
-    statDelay,
-    statDStat,
-    statEvent,
-    statEStat,
-    statements,
-    stmntBA,
-    stmntNBA,
-    stmntTask,
-    stmntSysTask,
-    stmntCondExpr,
-    stmntCondTrue,
-    stmntCondFalse,
 
     -- * Module
     ModDecl (..),
-    modId,
-    modOutPorts,
-    modInPorts,
-    modItems,
     ModItem (..),
-    modContAssign,
-    modInstId,
-    modInstName,
-    modInstConns,
     traverseModItem,
-    declDir,
-    declPort,
     ModConn (..),
-    modConnName,
-    modExpr,
 
     -- * Useful Lenses and Traversals
     getModule,

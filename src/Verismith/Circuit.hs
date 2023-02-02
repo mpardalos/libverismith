@@ -21,10 +21,5 @@ module Verismith.Circuit
   )
 where
 
-import Control.Lens
-import Hedgehog (Gen)
-import qualified Hedgehog.Gen as Hog
 import Verismith.Circuit.Base
 import Verismith.Circuit.Random
-import Verismith.Verilog.AST
-import Verismith.Verilog.Mutate

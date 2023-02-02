@@ -38,7 +38,7 @@ module Verismith.Verilog.Mutate
   )
 where
 
-import Control.Lens
+import Optics ((&), (%~), (%), traversed, (^..), (.~), (^.))
 import Data.Foldable (fold)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
@@ -49,6 +49,8 @@ import Verismith.Verilog.AST
 import Verismith.Verilog.BitVec
 import Verismith.Verilog.CodeGen
 import Verismith.Verilog.Internal
+import Data.Generics.Uniplate.Data (transform)
+import Optics.Operators.Unsafe ((^?!))
 
 class Mutate a where
   mutExpr :: (Expr -> Expr) -> a -> a
@@ -161,7 +163,7 @@ inPort :: Identifier -> (ModDecl ann) -> Bool
 inPort i m = inInput
   where
     inInput =
-      any (\a -> a ^. portName == i) $ m ^. modInPorts ++ m ^. modOutPorts
+      any (\a -> a.name == i) $ m.inPorts ++ m.outPorts
 
 -- | Find the last assignment of a specific wire/reg to an expression, and
 -- returns that expression.
@@ -195,12 +197,12 @@ replace = (transform .) . idTrans
 nestId :: Identifier -> (ModDecl ann) -> (ModDecl ann)
 nestId i m
   | not $ inPort i m =
-    let expr = fromMaybe def . findAssign i $ m ^. modItems
+    let expr = fromMaybe def . findAssign i $ m.items
      in m & get %~ replace i expr
   | otherwise =
     m
   where
-    get = modItems . traverse . modContAssign . contAssignExpr
+    get = #items % traversed % #_ModCA % #expr
     def = Id i
 
 -- | Replaces an identifier by a expression in all the module declaration.
@@ -214,8 +216,8 @@ nestUpTo i src =
 
 allVars :: (ModDecl ann) -> [Identifier]
 allVars m =
-  (m ^.. modOutPorts . traverse . portName)
-    <> (m ^.. modInPorts . traverse . portName)
+  (m ^.. #outPorts % traversed % #name)
+    <> (m ^.. #inPorts % traversed % #name)
 
 -- $setup
 -- >>> import Verismith.Verilog.CodeGen
@@ -235,25 +237,22 @@ allVars m =
 -- <BLANKLINE>
 -- <BLANKLINE>
 instantiateMod :: (ModDecl ann) -> (ModDecl ann) -> (ModDecl ann)
-instantiateMod m main = main & modItems %~ ((out ++ regIn ++ [inst]) ++)
+instantiateMod m main = main & #items %~ ((out ++ regIn ++ [inst]) ++)
   where
-    out = Decl Nothing <$> m ^. modOutPorts <*> pure Nothing
+    out = Decl Nothing <$> m.outPorts <*> pure Nothing
     regIn =
       Decl Nothing
-        <$> (m ^. modInPorts & traverse . portType .~ Reg)
+        <$> (m.inPorts & traversed % #portType .~ Reg)
         <*> pure Nothing
     inst =
       ModInst
-        (m ^. modId) []
-        (m ^. modId <> (Identifier . showT $ count + 1))
+        (m ^?! #id) []
+        (m ^?! #id <> (Identifier . showT $ count + 1))
         conns
     count =
       length
-        . filter (== m ^. modId)
-        $ main
-          ^.. modItems
-          . traverse
-          . modInstId
+        . filter (== m ^?! #id)
+        $ main ^.. #items % traversed % #instId
     conns = uncurry ModConnNamed . fmap Id <$> zip (allVars m) (allVars m)
 
 -- | Instantiate without adding wire declarations. It also does not count the
@@ -263,13 +262,13 @@ instantiateMod m main = main & modItems %~ ((out ++ regIn ++ [inst]) ++)
 -- m m(y, x);
 -- <BLANKLINE>
 instantiateMod_ :: (ModDecl ann) -> (ModItem ann)
-instantiateMod_ m = ModInst (m ^. modId) [] (m ^. modId) conns
+instantiateMod_ m = ModInst (m ^?! #id) [] (m ^?! #id) conns
   where
     conns =
       ModConn
         . Id
-        <$> (m ^.. modOutPorts . traverse . portName)
-        ++ (m ^.. modInPorts . traverse . portName)
+        <$> (m ^.. #outPorts % traversed % #name)
+        ++ (m ^.. #inPorts % traversed % #name)
 
 -- | Instantiate without adding wire declarations. It also does not count the
 -- current instantiations of the same module.
@@ -278,16 +277,16 @@ instantiateMod_ m = ModInst (m ^. modId) [] (m ^. modId) conns
 -- m m(.y(y), .x(x));
 -- <BLANKLINE>
 instantiateModSpec_ :: Bool -> Text -> (ModDecl ann) -> (ModItem ann)
-instantiateModSpec_ named outChar m = ModInst (m ^. modId) [] (m ^. modId) conns
+instantiateModSpec_ named outChar m = ModInst (m ^?! #id) [] (m ^?! #id) conns
   where
     conns = (if named then zipWith ModConnNamed ids else map ModConn) (Id <$> instIds)
-    ids = filterChar outChar (name modOutPorts) <> name modInPorts
-    instIds = name modOutPorts <> name modInPorts
-    name v = m ^.. v . traverse . portName
+    ids = filterChar outChar (name #outPorts) <> name #inPorts
+    instIds = name #outPorts <> name #inPorts
+    name v = m ^.. v % traversed % #name
 
 filterChar :: Text -> [Identifier] -> [Identifier]
 filterChar t ids =
-  ids & traverse . _Wrapped %~ (\x -> fromMaybe x . safe head $ T.splitOn t x)
+  ids & traversed % #_Identifier %~ (\x -> fromMaybe x . safe head $ T.splitOn t x)
 
 -- | Initialise all the inputs and outputs to a module.
 --
@@ -299,10 +298,10 @@ filterChar t ids =
 -- <BLANKLINE>
 -- <BLANKLINE>
 initMod :: (ModDecl ann) -> (ModDecl ann)
-initMod m = m & modItems %~ ((out ++ inp) ++)
+initMod m = m & #items %~ ((out ++ inp) ++)
   where
-    out = Decl (Just PortOut) <$> (m ^. modOutPorts) <*> pure Nothing
-    inp = Decl (Just PortIn) <$> (m ^. modInPorts) <*> pure Nothing
+    out = Decl (Just PortOut) <$> m.outPorts <*> pure Nothing
+    inp = Decl (Just PortIn) <$> m.inPorts <*> pure Nothing
 
 -- | Make an 'Identifier' from and existing Identifier and an object with a
 -- 'Show' instance to make it unique.
@@ -312,17 +311,17 @@ makeIdFrom a i = (i <>) . Identifier . ("_" <>) $ showT a
 -- | Make top level module for equivalence verification. Also takes in how many
 -- modules to instantiate.
 makeTop :: Bool -> Int -> (ModDecl ann) -> (ModDecl ann)
-makeTop named i m = ModDecl (m ^. modId) ys (m ^. modInPorts) modIt []
+makeTop named i m = ModDecl m.id ys m.inPorts modIt []
   where
     ys = yPort . flip makeIdFrom "y" <$> [1 .. i]
     modIt = instantiateModSpec_ named "_" . modN <$> [1 .. i]
     modN n =
-      m & modId %~ makeIdFrom n & modOutPorts .~ [yPort (makeIdFrom n "y")]
+      m & #id %~ makeIdFrom n & #outPorts .~ [yPort (makeIdFrom n "y")]
 
 -- | Make a top module with an assert that requires @y_1@ to always be equal to
 -- @y_2@, which can then be proven using a formal verification tool.
 makeTopAssert :: (ModDecl ann) -> (ModDecl ann)
-makeTopAssert = (modItems %~ (++ [assert])) . makeTop False 2
+makeTopAssert = (#items %~ (++ [assert])) . makeTop False 2
   where
     assert =
       Always . EventCtrl e . Just $
@@ -333,7 +332,7 @@ makeTopAssert = (modItems %~ (++ [assert])) . makeTop False 2
 -- | Provide declarations for all the ports that are passed to it. If they are
 -- registers, it should assign them to 0.
 declareMod :: [Port] -> (ModDecl ann) -> (ModDecl ann)
-declareMod ports = initMod . (modItems %~ (fmap decl ports ++))
+declareMod ports = initMod . (#items %~ (fmap decl ports ++))
   where
     decl p@(Port Reg _ _ _) = Decl Nothing p (Just 0)
     decl p = Decl Nothing p Nothing
@@ -391,25 +390,22 @@ combineAssigns :: Port -> [ModItem ann] -> [ModItem ann]
 combineAssigns p a =
   a
     <> [ ModCA
-           . ContAssign (p ^. portName)
+           . ContAssign p.name
            . UnOp UnXor
            . fold
            $ Id
              <$> assigns
        ]
   where
-    assigns = a ^.. traverse . modContAssign . contAssignNetLVal
+    assigns = a ^.. traversed % #_ModCA % #netLVal
 
 combineAssigns_ :: Bool -> Port -> [Port] -> (ModItem ann)
 combineAssigns_ comb p ps =
   ModCA
-    . ContAssign (p ^. portName)
+    . ContAssign p.name
     . (if comb then UnOp UnXor else id)
     . fold
-    $ Id
-      <$> ps
-      ^.. traverse
-      . portName
+    $ Id <$> ps ^.. traversed % #name
 
 fromPort :: Port -> Identifier
 fromPort (Port _ _ _ i) = i

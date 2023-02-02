@@ -24,7 +24,7 @@ module Verismith.Verilog.Parser
   )
 where
 
-import Control.Lens
+import Optics ((^..), (%), traversed)
 import Control.Monad (void)
 import Data.Bifunctor (bimap)
 import Data.Bits
@@ -504,7 +504,7 @@ filterDecl p (Decl (Just p') _ _) = p == p'
 filterDecl _ _ = False
 
 modPorts :: PortDir -> [ModItem ann] -> [Port]
-modPorts p mis = filter (filterDecl p) mis ^.. traverse . declPort
+modPorts p mis = filter (filterDecl p) mis ^.. traversed % #declPort
 
 parseModDecl :: Parser (ModDecl ann)
 parseModDecl = do
@@ -542,7 +542,7 @@ mergeIO a _ = a
 
 genmoditem :: Map.Map Identifier (ModItem a) -> ModItem a -> Map.Map Identifier (ModItem a)
 genmoditem m (Decl a b c) =
-  Map.insertWith mergeIO (b^.portName) (Decl a b c) m
+  Map.insertWith mergeIO b.name (Decl a b c) m
 genmoditem m b = m
 
 modifyelements :: [ModItem a] -> [ModItem a]

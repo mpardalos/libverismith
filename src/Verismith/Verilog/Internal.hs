@@ -26,7 +26,7 @@ module Verismith.Verilog.Internal
   )
 where
 
-import Control.Lens
+import Optics ((.~), (%~))
 import Data.Text (Text)
 import Verismith.Verilog.AST
 
@@ -42,14 +42,14 @@ emptyMod = ModDecl "" [] [] [] []
 
 -- | Set a module name for a module declaration.
 setModName :: Text -> (ModDecl ann) -> (ModDecl ann)
-setModName str = modId .~ Identifier str
+setModName str = #id .~ Identifier str
 
 -- | Add a input port to the module declaration.
 addModPort :: Port -> (ModDecl ann) -> (ModDecl ann)
-addModPort port = modInPorts %~ (:) port
+addModPort port = #inPorts %~ (:) port
 
 addModDecl :: (ModDecl ann) -> (Verilog ann) -> (Verilog ann)
-addModDecl desc = _Wrapped %~ (:) desc
+addModDecl desc = #_Verilog %~ (:) desc
 
 testBench :: (ModDecl ann)
 testBench =
@@ -83,7 +83,8 @@ portToExpr :: Port -> Expr
 portToExpr (Port _ _ _ i) = Id i
 
 modName :: (ModDecl ann) -> Text
-modName = getIdentifier . view modId
+modName (ModDecl name _ _ _ _) = name.getIdentifier
+modName (ModDeclAnn _ m) = modName m
 
 yPort :: Identifier -> Port
 yPort = Port Wire False (Range 90 0)

@@ -22,7 +22,7 @@ import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy as L
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeUtf8)
+
 
 -- | Converts unsafe list functions in the Prelude to a safe version.
 safe :: ([a] -> b) -> [a] -> Maybe b

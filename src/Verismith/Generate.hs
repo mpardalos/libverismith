@@ -76,12 +76,10 @@ module Verismith.Generate
   )
 where
 
-import Control.Lens hiding (Context)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable (fold)
 import Data.Functor.Foldable (cata)
-import Data.Generics.Product (field)
 import Data.List (foldl', partition)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -91,12 +89,15 @@ import Hedgehog (Gen, GenT, MonadGen, Seed)
 import Hedgehog qualified as Hog
 import Hedgehog.Gen qualified as Hog
 import Hedgehog.Range qualified as Hog
+import Optics ((^..), traversed, (%), view, use, (&), (.~), toListOf)
 import Verismith.Internal
 import Verismith.Verilog.AST
 import Verismith.Verilog.BitVec
 import Verismith.Verilog.Eval
 import Verismith.Verilog.Internal
 import Verismith.Verilog.Mutate
+import Optics.State.Operators ((%=), (.=))
+import Optics.Operators.Unsafe ((^?!))
 
 -- | Probability of different expressions nodes.
 data ProbExpr = ProbExpr
@@ -256,7 +257,7 @@ toPort ident = do
   return $ wire i ident
 
 sumSize :: [Port] -> Range
-sumSize ps = sum $ ps ^.. traverse . portSize
+sumSize ps = sum $ ps ^.. traversed % #size
 
 random :: (MonadGen m) => [Port] -> (Expr -> ContAssign) -> m (ModItem ann)
 random ctx fun = do
@@ -269,7 +270,7 @@ random ctx fun = do
 randomOrdAssigns :: (MonadGen m) => [Port] -> [Port] -> [m (ModItem ann)]
 randomOrdAssigns inp ids = snd $ foldr generate (inp, []) ids
   where
-    generate cid (i, o) = (cid : i, random i (ContAssign (_portName cid)) : o)
+    generate cid (i, o) = (cid : i, random i (ContAssign cid.name) : o)
 
 randomMod :: (MonadGen m) => Int -> Int -> m (ModDecl ann)
 randomMod inps total = do
@@ -380,14 +381,14 @@ constExprWithContext ps prob size
       Hog.frequency
         [ (prob.num, ConstNum <$> genBitVec),
           ( if null ps then 0 else prob.id,
-            ParamId . view paramIdent <$> Hog.element ps
+            ParamId . view #ident <$> Hog.element ps
           )
         ]
   | size > 0 =
       Hog.frequency
         [ (prob.num, ConstNum <$> genBitVec),
           ( if null ps then 0 else prob.id,
-            ParamId . view paramIdent <$> Hog.element ps
+            ParamId . view #ident <$> Hog.element ps
           ),
           (prob.unOp, ConstUnOp <$> unOp <*> subexpr 2),
           ( prob.binOp,
@@ -430,10 +431,10 @@ exprRecList prob subexpr =
 rangeSelect :: (MonadGen m) => [Parameter] -> [Port] -> m Expr
 rangeSelect ps ports = do
   p <- Hog.element ports
-  let s = calcRange ps (Just 32) $ p ^. portSize
+  let s = calcRange ps (Just 32) $ p.size
   msb <- Hog.int (Hog.constantFrom (s `div` 2) 0 (s - 1))
   lsb <- Hog.int (Hog.constantFrom (msb `div` 2) 0 msb)
-  return . RangeSelect (p ^. portName) $
+  return . RangeSelect p.name $
     Range
       (fromIntegral msb)
       (fromIntegral lsb)
@@ -475,15 +476,15 @@ makeIdentifier :: Text -> StateGen ann Identifier
 makeIdentifier prefix = do
   context <- get
   let ident = Identifier $ prefix <> showT (context.nameCounter)
-  field @"nameCounter" += 1
+  #nameCounter %= (+1)
   return ident
 
 newPort_ :: Bool -> PortType -> Identifier -> StateGen ann Port
 newPort_ blk pt ident = do
   p <- Port pt <$> Hog.bool <*> range <*> pure ident
   case pt of
-    Reg -> if blk then field @"blocking" %= (p :) else field @"nonblocking" %= (p :)
-    Wire -> field @"wires" %= (p :)
+    Reg -> if blk then #blocking %= (p :) else #nonblocking %= (p :)
+    Wire -> #wires %= (p :)
   return p
 
 -- | Creates a new port based on the current name counter and adds it to the
@@ -580,7 +581,7 @@ contAssign :: StateGen ann ContAssign
 contAssign = do
   expr <- scopedExpr
   p <- nextWirePort Nothing
-  return $ ContAssign (p ^. portName) expr
+  return $ ContAssign p.name expr
 
 -- | Generate a random assignment and assign it to a random 'Reg'.
 assignment :: Bool -> StateGen ann Assign
@@ -592,9 +593,9 @@ assignment blk = do
 -- | Generate a random 'Statement' safely, by also increasing the depth counter.
 seqBlock :: StateGen ann (Statement ann)
 seqBlock = do
-  field @"stmntDepth" -= 1
+  #stmntDepth %= (+1)
   tstat <- SeqBlock <$> someI 20 statement
-  field @"stmntDepth" += 1
+  #stmntDepth %= (+1)
   return tstat
 
 -- | Generate a random conditional 'Statement'. The nameCounter is reset between
@@ -604,13 +605,13 @@ seqBlock = do
 conditional :: StateGen ann (Statement ann)
 conditional = do
   expr <- scopedExprAll
-  nc <- use $ field @"nameCounter"
+  nc <- use #nameCounter
   tstat <- seqBlock
-  nc' <- use $ field @"nameCounter"
-  field @"nameCounter" .= nc
+  nc' <- use #nameCounter
+  #nameCounter .= nc
   fstat <- seqBlock
-  nc'' <- use $ field @"nameCounter"
-  field @"nameCounter" .= max nc' nc''
+  nc'' <- use #nameCounter
+  #nameCounter .= max nc' nc''
   return $ CondStmnt expr (Just tstat) (Just fstat)
 
 -- | Generate a random for loop by creating a new variable name for the counter
@@ -625,7 +626,7 @@ forLoop = do
     (Assign var Nothing $ BinOp (varId var) BinPlus 1)
     <$> seqBlock
   where
-    varId v = Id (v ^. regId)
+    varId v = Id (v ^?! #_RegId)
 
 -- | Choose a 'Statement' to generate.
 statement :: StateGen ann (Statement ann)
@@ -645,9 +646,9 @@ statement = do
 alwaysSeq :: StateGen ann (ModItem ann)
 alwaysSeq = do
   always <- Always . EventCtrl (EPosEdge "clk") . Just <$> seqBlock
-  blk <- use $ field @"blocking"
-  field @"outofscope" %= mappend blk
-  field @"blocking" .= []
+  blk <- use #blocking
+  #outofscope %= mappend blk
+  #blocking .= []
   return always
 
 -- | Should resize a port that connects to a module port if the latter is
@@ -657,7 +658,7 @@ resizePort :: [Parameter] -> Identifier -> Range -> [Port] -> [Port]
 resizePort ps i ra = foldl' func []
   where
     func l p@(Port _ _ ri i')
-      | i' == i && calc ri < calc ra = (p & portSize .~ ra) : l
+      | i' == i && calc ri < calc ra = (p & #size .~ ra) : l
       | otherwise = p : l
     calc = calcRange ps $ Just 64
 
@@ -678,10 +679,10 @@ instantiate (ModDecl i outP inP _ _) = do
   mapM_ (uncurry process)
     . zip
       ( zip
-          (ins ^.. traverse . portName)
-          (ins ^.. traverse . portType)
+          (ins ^.. traversed % #name)
+          (ins ^.. traversed % #portType)
       )
-    $ inpFixed ^.. traverse . portSize
+    $ inpFixed ^.. traversed % #size
   ident <- makeIdentifier "modinst"
   Hog.choice
     [ return . ModInst i [] ident $ ModConn <$> (toE (outs <> clkPort <> ins) <> insLit),
@@ -689,21 +690,21 @@ instantiate (ModDecl i outP inP _ _) = do
         <$> Hog.shuffle
           ( zipWith
               ModConnNamed
-              (view portName <$> outP <> clkPort <> inpFixed)
+              (view #name <$> outP <> clkPort <> inpFixed)
               (toE (outs <> clkPort <> ins) <> insLit)
           )
     ]
   where
-    toE ins = Id . view portName <$> ins
+    toE ins = Id . view #name <$> ins
     (inpFixed, clkPort) = partition filterFunc inP
     filterFunc (Port _ _ _ n)
       | n == "clk" = False
       | otherwise = True
     process (p, t) r = do
-      params <- use $ field @"parameters"
+      params <- use #parameters
       case t of
-        Reg -> field @"nonblocking" %= resizePort params p r
-        Wire -> field @"wires" %= resizePort params p r
+        Reg -> #nonblocking %= resizePort params p r
+        Wire -> #wires %= resizePort params p r
 
 -- | Generates a module instance by also generating a new module if there are
 -- not enough modules currently in the context. It keeps generating new modules
@@ -737,23 +738,23 @@ modInst = do
       let nb = context.nonblocking
       let b = context.blocking
       let oos = context.outofscope
-      field @"modules" .= []
-      field @"wires" .= []
-      field @"nonblocking" .= []
-      field @"blocking" .= []
-      field @"outofscope" .= []
-      field @"parameters" .= []
-      field @"modDepth" -= 1
+      #modules .= []
+      #wires .= []
+      #nonblocking .= []
+      #blocking .= []
+      #outofscope .= []
+      #parameters .= []
+      #modDepth %= subtract 1
       chosenMod <- moduleDef Nothing
       ncont <- get
       let genMods = ncont.modules
-      field @"modDepth" += 1
-      field @"parameters" .= params
-      field @"wires" .= w
-      field @"nonblocking" .= nb
-      field @"blocking" .= b
-      field @"outofscope" .= oos
-      field @"modules" .= chosenMod : currMods <> genMods
+      #modDepth %= (1+)
+      #parameters .= params
+      #wires .= w
+      #nonblocking .= nb
+      #blocking .= b
+      #outofscope .= oos
+      #modules .= chosenMod : currMods <> genMods
       instantiate chosenMod
     else Hog.element (context.modules) >>= instantiate
 
@@ -767,7 +768,7 @@ modItem = do
       [ (conf.property.determinism, return True),
         (conf.property.nonDeterminism, return False)
       ]
-  field @"determinism" .= det
+  #determinism .= det
   Hog.frequency
     [ (conf.probability.modItem.assign, ModCA <$> contAssign),
       (conf.probability.modItem.seqAlways, alwaysSeq),
@@ -800,7 +801,7 @@ parameter = do
   ident <- makeIdentifier "param"
   cexpr <- constExpr
   let param = Parameter ident cexpr
-  field @"parameters" %= (param :)
+  #parameters %= (param :)
   return param
 
 -- | Evaluate a range to an integer, and cast it back to a range.
@@ -818,7 +819,7 @@ calcRange ps i (Range l r) = eval l - eval r + 1
 -- | Filter out a port based on it's name instead of equality of the ports. This
 -- is because the ports might not be equal if the sizes are being updated.
 identElem :: Port -> [Port] -> Bool
-identElem p = elem (p ^. portName) . toListOf (traverse . portName)
+identElem p = elem p.name . toListOf (traversed % #name)
 
 -- | Select items from a list with a specific frequency, returning the new list
 -- that contains the selected items. If 0 is passed to both the select and
@@ -857,9 +858,7 @@ moduleDef top = do
   let size =
         evalRange context.parameters 32
           . sum
-          $ localPorts
-            ^.. traverse
-              . portSize
+          $ localPorts ^.. traversed % #size
   let (ProbMod n s) = config.probability.mod
   newlocal <- selectwfreq s n localPorts
   let clock = Port Wire False 1 "clk"
