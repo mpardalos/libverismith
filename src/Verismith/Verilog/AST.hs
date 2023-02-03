@@ -98,18 +98,21 @@ import GHC.Generics (Generic)
 import Optics (Lens', Traversal', lens, traversed, (%), (%~), (&), (^..))
 import Optics.TH
 import Verismith.Verilog.BitVec
+import Control.Monad (void)
 
 class Functor m => Annotations m where
   removeAnn :: m a -> m a
   clearAnn :: m a -> m ()
-  clearAnn = fmap (\_ -> ()) . removeAnn
+  clearAnn = void . removeAnn
   collectAnn :: m a -> [a]
 
 -- | Identifier in Verilog. This is just a string of characters that can either
 -- be lowercase and uppercase for now. This might change in the future though,
 -- as Verilog supports many more characters in Identifiers.
-newtype Identifier = Identifier {getIdentifier :: Text}
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+newtype Identifier where
+  Identifier :: {getIdentifier :: Text} -> Identifier
+  deriving (Eq, Show, Ord, Data, Generic)
+  deriving newtype NFData
 
 makePrismLabels ''Identifier
 
@@ -124,7 +127,8 @@ instance Monoid Identifier where
 
 -- | Verilog syntax for adding a delay, which is represented as @#num@.
 newtype Delay = Delay {_getDelay :: Int}
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+  deriving (Eq, Show, Ord, Data, Generic)
+  deriving newtype NFData
 
 makePrismLabels ''Delay
 
@@ -450,13 +454,6 @@ data CasePair a
       }
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
-traverseStmntCasePair ::
-  Functor f =>
-  (Statement a1 -> f (Statement a2)) ->
-  CasePair a1 ->
-  f (CasePair a2)
-traverseStmntCasePair f (CasePair a s) = CasePair a <$> f s
-
 -- | Type of case statement, which determines how it is interpreted.
 data CaseType
   = CaseStandard
@@ -597,7 +594,7 @@ instance Annotations ModItem where
   collectAnn (ModItemAnn _ mi) = collectAnn mi
   collectAnn (Initial s) = collectAnn s
   collectAnn (Always s) = collectAnn s
-  collectAnn mi = []
+  collectAnn _ = []
 
 -- | 'module' module_identifier [list_of_ports] ';' { module_item } 'end_module'
 data ModDecl a
@@ -610,9 +607,6 @@ data ModDecl a
       }
   | ModDeclAnn a (ModDecl a)
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
-
-infMod :: ModDecl Int
-infMod = ModDeclAnn 42 infMod
 
 makeFieldLabelsNoPrefix ''ModDecl
 makePrismLabels ''ModDecl
@@ -627,26 +621,22 @@ traverseModConn :: (Applicative f) => (Expr -> f Expr) -> ModConn -> f ModConn
 traverseModConn f (ModConn e) = ModConn <$> f e
 traverseModConn f (ModConnNamed a e) = ModConnNamed a <$> f e
 
-traverseModItem :: (Applicative f) => (Expr -> f Expr) -> (ModItem ann) -> f (ModItem ann)
+traverseModItem :: (Applicative f) => (Expr -> f Expr) -> ModItem ann -> f (ModItem ann)
 traverseModItem f (ModCA (ContAssign a e)) = ModCA . ContAssign a <$> f e
 traverseModItem f (ModInst a b c e) =
-  ModInst a b c <$> sequenceA (traverseModConn f <$> e)
+  ModInst a b c <$> traverse (traverseModConn f) e
 traverseModItem _ e = pure e
 
 -- | The complete sourcetext for the Verilog module.
 newtype Verilog a = Verilog {getVerilog :: [ModDecl a]}
-  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
+  deriving (Eq, Show, Ord, Functor, Data, Generic)
+  deriving newtype (NFData, Semigroup, Monoid)
 
 makePrismLabels ''Verilog
 
-instance Semigroup (Verilog a) where
-  Verilog a <> Verilog b = Verilog $ a <> b
-
-instance Monoid (Verilog a) where
-  mempty = Verilog mempty
-
 instance Annotations Verilog where
   removeAnn (Verilog v) = Verilog $ fmap removeAnn v
+  collectAnn (Verilog v) = concatMap collectAnn v
 
 -- | Top level type which contains all the source code and associated
 -- information.
@@ -667,6 +657,7 @@ instance Monoid (SourceInfo a) where
 
 instance Annotations SourceInfo where
   removeAnn (SourceInfo t v) = SourceInfo t $ removeAnn v
+  collectAnn (SourceInfo _ v) = collectAnn v
 
 -- | Attributes which can be set to various nodes in the AST.
 --

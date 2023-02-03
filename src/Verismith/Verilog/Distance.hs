@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use record patterns" #-}
 {-|
 Module      : Verismith.Verilog.Distance
 Description : Definition of the distance function for the abstract syntax tree.
@@ -77,12 +79,10 @@ instance Distance a => Distance [a] where
                 , distance at bt + cost
                 ]
 
-  udistance a b = minimum [ remdist a b
-                          , remdist b a
-                          ]
+  udistance a b = min (remdist a b) (remdist b a)
 
   dempty [] = 0
-  dempty (a:b) = maximum [dempty a, dempty b]
+  dempty (a:b) = max (dempty a) (dempty b)
 
 instance Distance a => Distance (Maybe a) where
   distance Nothing a = dempty a
@@ -164,11 +164,18 @@ instance Distance Port where
   dempty (Port t1 s1 r1 _) = 1 + dempty t1 + dempty s1 + dempty r1
 
 instance Distance (ModDecl a) where
-  distance (ModDecl _ min1 mout1 mis1 mp1) (ModDecl _ min2 mout2 mis2 mp2) =
-    distance min1 min2 + distance mout1 mout2 + distance mis1 mis2 + distance mp1 mp2
-  udistance (ModDecl _ min1 mout1 mis1 mp1) (ModDecl _ min2 mout2 mis2 mp2) =
-    udistance min1 min2 + udistance mout1 mout2 + udistance mis1 mis2 + udistance mp1 mp2
-  dempty (ModDecl _ min mout mis mp) = 1 + dempty min + dempty mout + dempty mis + dempty mp
+  distance (ModDeclAnn _ m1) m2 = distance m1 m2
+  distance m1 (ModDeclAnn _ m2) = distance m1 m2
+  distance (ModDecl _ in1 out1 items1 params1) (ModDecl _ in2 out2 items2 params2) =
+    distance in1 in2 + distance out1 out2 + distance items1 items2 + distance params1 params2
+
+  udistance (ModDeclAnn _ m1) m2 = udistance m1 m2
+  udistance m1 (ModDeclAnn _ m2) = udistance m1 m2
+  udistance (ModDecl _ pin1 pout1 items1 params1) (ModDecl _ pin2 pout2 items2 params2) =
+    udistance pin1 pin2 + udistance pout1 pout2 + udistance items1 items2 + udistance params1 params2
+
+  dempty (ModDeclAnn _ m) = dempty m
+  dempty (ModDecl _ pin pout items params) = 1 + dempty pin + dempty pout + dempty items + dempty params
 
 instance Distance (Verilog a) where
   distance (Verilog m1) (Verilog m2) = distance m1 m2

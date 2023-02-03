@@ -1,3 +1,5 @@
+{- HLINT ignore "Use <$>" -}
+
 -- |
 -- Module      : Verismith.Verilog.Parser
 -- Description : Minimal Verilog parser to reconstruct the AST.
@@ -26,13 +28,12 @@ where
 
 import Optics ((^..), (%), traversed)
 import Control.Monad (void)
-import Data.Bifunctor (bimap)
+import Data.Bifunctor (first)
 import Data.Bits
 import Data.Functor (($>))
 import Data.Functor.Identity (Identity)
-import Data.List (isInfixOf, isPrefixOf, null)
+import Data.List (isInfixOf, isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -317,7 +318,7 @@ parsePortDir =
     $> PortInOut
 
 parseDecl :: Parser (ModItem ann)
-parseDecl = (Just <$> parsePortDir >>= parseNetDecl) <|> parseNetDecl Nothing
+parseDecl = (parseNetDecl . Just =<< parsePortDir) <|> parseNetDecl Nothing
 
 parseConditional :: Parser (Statement ann)
 parseConditional = do
@@ -331,7 +332,7 @@ parseLVal = fmap RegConcat (braces $ commaSep parseExpr) <|> ident
   where
     ident = do
       i <- identifier
-      (try (ex i) <|> try (sz i) <|> return (RegId i))
+      try (ex i) <|> try (sz i) <|> return (RegId i)
     ex i = do
       e <- tok' SymBrackL *> parseExpr
       tok' SymBrackR
@@ -499,7 +500,7 @@ parseModItem =
 parseModList :: Parser [Identifier]
 parseModList = list <|> return [] where list = parens $ commaSep identifier
 
-filterDecl :: PortDir -> (ModItem ann) -> Bool
+filterDecl :: PortDir -> ModItem ann -> Bool
 filterDecl p (Decl (Just p') _ _) = p == p'
 filterDecl _ _ = False
 
@@ -522,37 +523,6 @@ parseModDecl = do
       modItem
       paramList
 
-mergeMaybe :: Maybe a -> Maybe a -> Maybe a
-mergeMaybe (Just a) Nothing = Just a
-mergeMaybe Nothing (Just a) = Just a
-mergeMaybe a _ = a
-
-mergeType :: PortType -> PortType -> PortType
-mergeType Reg Wire = Reg
-mergeType Wire Reg = Reg
-mergeType a _ = a
-
-mergePorts :: Port -> Port -> Port
-mergePorts (Port t1 s1 r1 n1) (Port t2 s2 r2 n2) =
-  Port (mergeType t1 t2) (s1 || s2) (if r1 == 0 then r2 else r1) n1
-
-mergeIO :: ModItem a -> ModItem a -> ModItem a
-mergeIO (Decl a1 b1 c1) (Decl a2 b2 c2) = Decl (mergeMaybe a1 a2) (mergePorts b1 b2) (mergeMaybe c1 c2)
-mergeIO a _ = a
-
-genmoditem :: Map.Map Identifier (ModItem a) -> ModItem a -> Map.Map Identifier (ModItem a)
-genmoditem m (Decl a b c) =
-  Map.insertWith mergeIO b.name (Decl a b c) m
-genmoditem m b = m
-
-modifyelements :: [ModItem a] -> [ModItem a]
-modifyelements ma = ndecl <> nodecl
-  where
-    ndecl = Map.elems $ foldl genmoditem Map.empty ma
-    isDecl Decl{} = True
-    isDecl _ = False
-    nodecl = filter isDecl ma
-
 -- | Parses a 'String' into 'Verilog' by skipping any beginning whitespace
 -- and then parsing multiple Verilog source.
 parseVerilogSrc :: Parser (Verilog ann)
@@ -569,7 +539,7 @@ parseVerilog ::
   -- message if parse fails.
   Either Text (Verilog ann)
 parseVerilog s =
-  bimap showT id --(_Wrapped.traverse.modItems %~ modifyelements)
+  first showT
     . parse parseVerilogSrc (T.unpack s)
     . alexScanTokens
     . preprocess [] (T.unpack s)

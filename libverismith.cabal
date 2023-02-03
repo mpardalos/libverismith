@@ -58,3 +58,4 @@ library
     default-extensions: OverloadedStrings
                         OverloadedLabels
                         OverloadedRecordDot
+                        DerivingStrategies

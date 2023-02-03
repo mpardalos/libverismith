@@ -17,12 +17,8 @@ module Verismith.Internal
   )
 where
 
-import Data.ByteString (ByteString)
-import Data.ByteString.Builder (byteStringHex, toLazyByteString)
-import qualified Data.ByteString.Lazy as L
 import Data.Text (Text)
-import qualified Data.Text as T
-
+import Data.Text qualified as T
 
 -- | Converts unsafe list functions in the Prelude to a safe version.
 safe :: ([a] -> b) -> [a] -> Maybe b
