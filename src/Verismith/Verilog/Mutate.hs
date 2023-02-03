@@ -395,7 +395,7 @@ combineAssigns p a =
            $ foldMap Id assigns
        ]
   where
-    assigns = a ^.. traversed % #_ModCA % #netLVal
+    assigns = a ^.. traversed % #_ModCA % #lval
 
 combineAssigns_ :: Bool -> Port -> [Port] -> ModItem ann
 combineAssigns_ comb p ps =
