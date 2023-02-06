@@ -186,7 +186,7 @@ idTrans _ _ e = e
 
 -- | Replaces the identifier recursively in an expression.
 replace :: Identifier -> Expr -> Expr -> Expr
-replace = (transform .) . idTrans
+replace ident e = transform (idTrans ident e)
 
 -- | Nest expressions for a specific 'Identifier'. If the 'Identifier' is not
 -- found, the AST is not changed.
