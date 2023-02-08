@@ -30,30 +30,31 @@ import Optics ((.~), (%~))
 import Data.Text (Text)
 import Verismith.Verilog.AST
 
-regDecl :: Identifier -> (ModItem ann)
-regDecl i = Decl Nothing (Port Reg False (Range 1 0) i) Nothing
+regDecl :: Monoid ann => Identifier -> ModItem ann
+regDecl i = Decl mempty Nothing (Port Reg False (Range 1 0) i) Nothing
 
-wireDecl :: Identifier -> (ModItem ann)
-wireDecl i = Decl Nothing (Port Wire False (Range 1 0) i) Nothing
+wireDecl :: Monoid ann => Identifier -> ModItem ann
+wireDecl i = Decl mempty Nothing (Port Wire False (Range 1 0) i) Nothing
 
 -- | Create an empty module.
-emptyMod :: (ModDecl ann)
-emptyMod = ModDecl "" [] [] [] []
+emptyMod :: Monoid ann => ModDecl ann
+emptyMod = ModDecl mempty "" [] [] [] []
 
 -- | Set a module name for a module declaration.
-setModName :: Text -> (ModDecl ann) -> (ModDecl ann)
+setModName :: Text -> ModDecl ann -> ModDecl ann
 setModName str = #id .~ Identifier str
 
 -- | Add a input port to the module declaration.
-addModPort :: Port -> (ModDecl ann) -> (ModDecl ann)
+addModPort :: Port ann -> ModDecl ann -> ModDecl ann
 addModPort port = #inPorts %~ (:) port
 
-addModDecl :: (ModDecl ann) -> (Verilog ann) -> (Verilog ann)
+addModDecl :: ModDecl ann -> Verilog ann -> Verilog ann
 addModDecl desc = #_Verilog %~ (:) desc
 
-testBench :: (ModDecl ann)
+testBench :: Monoid ann => ModDecl ann
 testBench =
   ModDecl
+    mempty
     "main"
     []
     []
@@ -61,36 +62,36 @@ testBench =
       regDecl "b",
       wireDecl "c",
       ModInst
+        mempty
         "and"
         []
         "and_gate"
-        [ModConn $ Id "c", ModConn $ Id "a", ModConn $ Id "b"],
-      Initial $
-        SeqBlock
-          [ BlockAssign . Assign (RegId "a") Nothing $ Number 1,
-            BlockAssign . Assign (RegId "b") Nothing $ Number 1
+        [ModConn $ Id mempty "c", ModConn $ Id mempty "a", ModConn $ Id mempty "b"],
+      Initial mempty $
+        SeqBlock mempty
+          [ BlockAssign mempty (Assign (RegId "a") Nothing 1),
+            BlockAssign mempty (Assign (RegId "b") Nothing 1)
           ]
     ]
     []
 
-addTestBench :: (Verilog ann) -> (Verilog ann)
+addTestBench :: Monoid ann => Verilog ann -> Verilog ann
 addTestBench = addModDecl testBench
 
-defaultPort :: Identifier -> Port
+defaultPort :: Monoid ann => Identifier -> Port ann
 defaultPort = Port Wire False (Range 1 0)
 
-portToExpr :: Port -> Expr
-portToExpr (Port _ _ _ i) = Id i
+portToExpr :: Monoid ann => Port ann -> Expr ann
+portToExpr (Port _ _ _ i) = Id mempty i
 
-modName :: (ModDecl ann) -> Text
-modName (ModDecl name _ _ _ _) = name.getIdentifier
-modName (ModDeclAnn _ m) = modName m
+modName :: ModDecl ann -> Text
+modName (ModDecl _ name _ _ _ _) = name.getIdentifier
 
-yPort :: Identifier -> Port
+yPort :: Monoid ann => Identifier -> Port ann
 yPort = Port Wire False (Range 90 0)
 
-wire :: Range -> Identifier -> Port
+wire :: Range ann -> Identifier -> Port ann
 wire = Port Wire False
 
-reg :: Range -> Identifier -> Port
+reg :: Range ann -> Identifier -> Port ann
 reg = Port Reg False

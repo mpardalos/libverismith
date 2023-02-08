@@ -110,14 +110,14 @@ instance Distance Text where
 instance Distance Identifier where
   distance = eqDistance
 
-eval :: ConstExpr -> Integer
+eval :: ConstExpr ann -> Integer
 eval c = toInteger (cata (evaluateConst []) c)
 
-instance Distance ConstExpr where
+instance Distance (ConstExpr ann) where
   distance c1 c2 = distance (eval c1) $ eval c2
   udistance c1 c2 = udistance (eval c1) $ eval c2
 
-instance Distance Parameter where
+instance Distance (Parameter ann) where
   distance _ _ = 0
 
 instance Distance PortType where
@@ -127,36 +127,35 @@ instance Distance PortDir where
   distance = eqDistance
 
 instance Distance (Statement a) where
-  distance (TimeCtrl _ s1) (TimeCtrl _ s2) = distance s1 s2
-  distance (EventCtrl _ s1) (EventCtrl _ s2) = distance s1 s2
-  distance (SeqBlock s1) (SeqBlock s2) = distance s1 s2
-  distance (CondStmnt _ st1 sf1) (CondStmnt _ st2 sf2) = distance st1 st2 + distance sf1 sf2
-  distance (ForLoop _ _ _ s1) (ForLoop _ _ _ s2) = distance s1 s2
-  distance (StmntAnn _ s1) s2 = distance s1 s2
-  distance (BlockAssign _) (BlockAssign _) = 0
-  distance (NonBlockAssign _) (NonBlockAssign _) = 0
-  distance (TaskEnable _) (TaskEnable _) = 0
-  distance (SysTaskEnable _) (SysTaskEnable _) = 0
-  distance (StmntCase _ _ _ _) (StmntCase _ _ _ _) = 0
+  distance (TimeCtrl _ _ s1) (TimeCtrl _ _ s2) = distance s1 s2
+  distance (EventCtrl _ _ s1) (EventCtrl _ _ s2) = distance s1 s2
+  distance (SeqBlock _ s1) (SeqBlock _ s2) = distance s1 s2
+  distance (CondStmnt _ _ st1 sf1) (CondStmnt _ _ st2 sf2) = distance st1 st2 + distance sf1 sf2
+  distance (ForLoop _ _ _ _ s1) (ForLoop _ _ _ _ s2) = distance s1 s2
+  distance (BlockAssign _ _) (BlockAssign _ _) = 0
+  distance (NonBlockAssign _ _) (NonBlockAssign _ _) = 0
+  distance (TaskEnable _ _) (TaskEnable _ _) = 0
+  distance (SysTaskEnable _ _) (SysTaskEnable _ _) = 0
+  distance (StmntCase _ _ _ _ _) (StmntCase _ _ _ _ _) = 0
   distance _ _ = 1
 
 instance Distance (ModItem a) where
-  distance (ModCA _) (ModCA _) = 0
-  distance (ModInst _ _ _ _) (ModInst _ _ _ _) = 0
-  distance (Initial _) (Initial _) = 0
-  distance (Always s1) (Always s2) = distance s1 s2
-  distance (Decl _ _ _) (Decl _ _ _) = 0
-  distance (ParamDecl _) (ParamDecl _) = 0
-  distance (LocalParamDecl _) (LocalParamDecl _) = 0
+  distance (ModCA _ _) (ModCA _ _) = 0
+  distance (ModInst _ _ _ _ _) (ModInst _ _ _ _ _) = 0
+  distance (Initial _ _) (Initial _ _) = 0
+  distance (Always _ s1) (Always _ s2) = distance s1 s2
+  distance (Decl _ _ _ _) (Decl _ _ _ _) = 0
+  distance (ParamDecl _ _) (ParamDecl _ _) = 0
+  distance (LocalParamDecl _ _) (LocalParamDecl _ _) = 0
   distance _ _ = 1
 
-instance Distance Range where
+instance Distance (Range ann) where
   distance (Range a1 b1) (Range a2 b2) =
     distance a1 a2 + distance b1 b2
   udistance (Range a1 b1) (Range a2 b2) =
     udistance a1 a2 + udistance b1 b2
 
-instance Distance Port where
+instance Distance (Port ann) where
   distance (Port t1 s1 r1 _) (Port t2 s2 r2 _) =
     distance t1 t2 + distance s1 s2 + distance r1 r2
   udistance (Port t1 s1 r1 _) (Port t2 s2 r2 _) =
@@ -164,18 +163,13 @@ instance Distance Port where
   dempty (Port t1 s1 r1 _) = 1 + dempty t1 + dempty s1 + dempty r1
 
 instance Distance (ModDecl a) where
-  distance (ModDeclAnn _ m1) m2 = distance m1 m2
-  distance m1 (ModDeclAnn _ m2) = distance m1 m2
-  distance (ModDecl _ in1 out1 items1 params1) (ModDecl _ in2 out2 items2 params2) =
+  distance (ModDecl _ _ in1 out1 items1 params1) (ModDecl _ _ in2 out2 items2 params2) =
     distance in1 in2 + distance out1 out2 + distance items1 items2 + distance params1 params2
 
-  udistance (ModDeclAnn _ m1) m2 = udistance m1 m2
-  udistance m1 (ModDeclAnn _ m2) = udistance m1 m2
-  udistance (ModDecl _ pin1 pout1 items1 params1) (ModDecl _ pin2 pout2 items2 params2) =
+  udistance (ModDecl _ _ pin1 pout1 items1 params1) (ModDecl _ _ pin2 pout2 items2 params2) =
     udistance pin1 pin2 + udistance pout1 pout2 + udistance items1 items2 + udistance params1 params2
 
-  dempty (ModDeclAnn _ m) = dempty m
-  dempty (ModDecl _ pin pout items params) = 1 + dempty pin + dempty pout + dempty items + dempty params
+  dempty (ModDecl _ _ pin pout items params) = 1 + dempty pin + dempty pout + dempty items + dempty params
 
 instance Distance (Verilog a) where
   distance (Verilog m1) (Verilog m2) = distance m1 m2

@@ -42,7 +42,6 @@ import Text.Parsec.Expr
 import Verismith.Internal
 import Verismith.Verilog.AST
 import Verismith.Verilog.BitVec
-import Verismith.Verilog.Internal
 import Verismith.Verilog.Lex
 import Verismith.Verilog.Preprocess
 import Verismith.Verilog.Token
@@ -95,34 +94,34 @@ brackets = between (tok SymBrackL) (tok SymBrackR)
 braces :: Parser a -> Parser a
 braces = between (tok SymBraceL) (tok SymBraceR)
 
-sBinOp :: BinaryOperator -> Expr -> Expr -> Expr
-sBinOp = sOp BinOp where sOp f b a = f a b
+sBinOp :: Monoid ann => BinaryOperator -> Expr ann -> Expr ann -> Expr ann
+sBinOp = flip (BinOp mempty)
 
-parseExpr' :: Parser Expr
+parseExpr' :: Monoid ann => Parser (Expr ann)
 parseExpr' = buildExpressionParser parseTable parseTerm <?> "expr"
 
-decToExpr :: Decimal -> Expr
-decToExpr (Decimal s n) = Number $ bitVec s n
+decToExpr :: Monoid ann => Decimal -> Expr ann
+decToExpr (Decimal s n) = Number mempty $ bitVec s n
 
 -- | Parse a Number depending on if it is in a hex or decimal form. Octal and
 -- binary are not supported yet.
-parseNum :: Parser Expr
+parseNum :: Monoid ann => Parser (Expr ann)
 parseNum = decToExpr <$> number
 
-parseVar :: Parser Expr
-parseVar = Id <$> identifier
+parseVar :: Monoid ann => Parser (Expr ann)
+parseVar = Id mempty <$> identifier
 
-parseVecSelect :: Parser Expr
+parseVecSelect :: Monoid ann => Parser (Expr ann)
 parseVecSelect = do
   i <- identifier
   expr <- brackets parseExpr
-  return $ VecSelect i expr
+  return $ VecSelect mempty i expr
 
-parseRangeSelect :: Parser Expr
+parseRangeSelect :: Monoid ann => Parser (Expr ann)
 parseRangeSelect = do
   i <- identifier
   range <- parseRange
-  return $ RangeSelect i range
+  return $ RangeSelect mempty i range
 
 systemFunc :: Parser String
 systemFunc = satisfy' matchId
@@ -130,20 +129,20 @@ systemFunc = satisfy' matchId
     matchId (Token IdSystem s _) = Just s
     matchId _ = Nothing
 
-parseFun :: Parser Expr
+parseFun :: Monoid ann => Parser (Expr ann)
 parseFun = do
   f <- systemFunc
   expr <- parens parseExpr
-  return $ Appl (Identifier $ T.pack f) expr
+  return $ Appl mempty (Identifier $ T.pack f) expr
 
 parserNonEmpty :: [a] -> Parser (NonEmpty a)
 parserNonEmpty (a : b) = return $ a :| b
 parserNonEmpty [] = fail "Concatenation cannot be empty."
 
-parseTerm :: Parser Expr
+parseTerm :: Monoid ann => Parser (Expr ann)
 parseTerm =
   parens parseExpr
-    <|> (Concat <$> (braces (commaSep parseExpr) >>= parserNonEmpty))
+    <|> (Concat mempty <$> (braces (commaSep parseExpr) >>= parserNonEmpty))
     <|> parseFun
     <|> parseNum
     <|> try parseVecSelect
@@ -153,35 +152,35 @@ parseTerm =
 
 -- | Parses the ternary conditional operator. It will behave in a right
 -- associative way.
-parseCond :: Expr -> Parser Expr
+parseCond :: Monoid ann => Expr ann -> Parser (Expr ann)
 parseCond e = do
   tok' SymQuestion
   expr <- parseExpr
   tok' SymColon
-  Cond e expr <$> parseExpr
+  Cond mempty e expr <$> parseExpr
 
-parseExpr :: Parser Expr
+parseExpr :: Monoid ann => Parser (Expr ann)
 parseExpr = do
   e <- parseExpr'
   option e . try $ parseCond e
 
-parseConstExpr :: Parser ConstExpr
+parseConstExpr :: Monoid ann => Parser (ConstExpr ann)
 parseConstExpr = fmap exprToConst parseExpr
 
 -- | Table of binary and unary operators that encode the right precedence for
 -- each.
-parseTable :: [[ParseOperator Expr]]
+parseTable :: Monoid ann => [[ParseOperator (Expr ann)]]
 parseTable =
-  [ [prefix SymBang (UnOp UnLNot), prefix SymTildy (UnOp UnNot)],
-    [ prefix SymAmp (UnOp UnAnd),
-      prefix SymBar (UnOp UnOr),
-      prefix SymTildyAmp (UnOp UnNand),
-      prefix SymTildyBar (UnOp UnNor),
-      prefix SymHat (UnOp UnXor),
-      prefix SymTildyHat (UnOp UnNxor),
-      prefix SymHatTildy (UnOp UnNxorInv)
+  [ [prefix SymBang (unOp UnLNot), prefix SymTildy (unOp UnNot)],
+    [ prefix SymAmp (unOp UnAnd),
+      prefix SymBar (unOp UnOr),
+      prefix SymTildyAmp (unOp UnNand),
+      prefix SymTildyBar (unOp UnNor),
+      prefix SymHat (unOp UnXor),
+      prefix SymTildyHat (unOp UnNxor),
+      prefix SymHatTildy (unOp UnNxorInv)
     ],
-    [prefix SymPlus (UnOp UnPlus), prefix SymDash (UnOp UnMinus)],
+    [prefix SymPlus (unOp UnPlus), prefix SymDash (unOp UnMinus)],
     [binary SymAsterAster (sBinOp BinPower) AssocRight],
     [ binary SymAster (sBinOp BinTimes) AssocLeft,
       binary SymSlash (sBinOp BinDiv) AssocLeft,
@@ -216,6 +215,7 @@ parseTable =
     [binary SymAmpAmp (sBinOp BinLAnd) AssocLeft],
     [binary SymBarBar (sBinOp BinLOr) AssocLeft]
   ]
+  where unOp = UnOp mempty
 
 binary :: TokenName -> (a -> a -> a) -> Assoc -> ParseOperator a
 binary name fun = Infix ((tok name <?> "binary") >> return fun)
@@ -236,7 +236,7 @@ toNE p = do
 commaSepNE :: Parser a -> Parser (NonEmpty a)
 commaSepNE = toNE . commaSep
 
-parseContAssign :: Parser ContAssign
+parseContAssign :: Monoid ann => Parser (ContAssign ann)
 parseContAssign = do
   var <- tok KWAssign *> identifier
   expr <- tok SymEq *> parseExpr
@@ -279,7 +279,7 @@ toInt' (Decimal _ n) = fromInteger n
 
 -- | Parse a range and return the total size. As it is inclusive, 1 has to be
 -- added to the difference.
-parseRange :: Parser Range
+parseRange :: Monoid ann => Parser (Range ann)
 parseRange = do
   rangeH <- tok SymBrackL *> parseConstExpr
   rangeL <- tok SymColon *> parseConstExpr
@@ -296,7 +296,7 @@ strId = satisfy' matchId
 identifier :: Parser Identifier
 identifier = Identifier . T.pack <$> strId
 
-parseNetDecl :: Maybe PortDir -> Parser (ModItem ann)
+parseNetDecl :: Monoid ann => Maybe PortDir -> Parser (ModItem ann)
 parseNetDecl pd = do
   t <- option Wire type_
   sign <- option False (tok KWSigned $> True)
@@ -304,7 +304,7 @@ parseNetDecl pd = do
   name <- identifier
   i <- option Nothing (fmap Just (tok' SymEq *> parseConstExpr))
   tok' SymSemi
-  return $ Decl pd (Port t sign range name) i
+  return $ Decl mempty pd (Port t sign range name) i
   where
     type_ = tok KWWire $> Wire <|> tok KWReg $> Reg
 
@@ -317,17 +317,17 @@ parsePortDir =
     <|> tok KWInout
     $> PortInOut
 
-parseDecl :: Parser (ModItem ann)
+parseDecl :: Monoid ann => Parser (ModItem ann)
 parseDecl = (parseNetDecl . Just =<< parsePortDir) <|> parseNetDecl Nothing
 
-parseConditional :: Parser (Statement ann)
+parseConditional :: Monoid ann => Parser (Statement ann)
 parseConditional = do
   expr <- tok' KWIf *> parens parseExpr
   true <- maybeEmptyStatement
   false <- option Nothing (tok' KWElse *> maybeEmptyStatement)
-  return $ CondStmnt expr true false
+  return $ CondStmnt mempty expr true false
 
-parseLVal :: Parser LVal
+parseLVal :: Monoid ann => Parser (LVal ann)
 parseLVal = fmap RegConcat (braces $ commaSep parseExpr) <|> ident
   where
     ident = do
@@ -342,7 +342,7 @@ parseLVal = fmap RegConcat (braces $ commaSep parseExpr) <|> ident
 parseDelay :: Parser Delay
 parseDelay = Delay . toInt' <$> (tok' SymPound *> number)
 
-parseAssign :: TokenName -> Parser Assign
+parseAssign :: Monoid ann => TokenName -> Parser (Assign ann)
 parseAssign t = do
   lval <- parseLVal
   tok' t
@@ -350,37 +350,37 @@ parseAssign t = do
   expr <- parseExpr
   return $ Assign lval delay expr
 
-parseLoop :: Parser (Statement ann)
+parseLoop :: Monoid ann => Parser (Statement ann)
 parseLoop = do
   a <- tok' KWFor *> tok' SymParenL *> parseAssign SymEq
   expr <- tok' SymSemi *> parseExpr
   incr <- tok' SymSemi *> parseAssign SymEq
   tok' SymParenR
   statement <- parseStatement
-  return $ ForLoop a expr incr statement
+  return $ ForLoop mempty a expr incr statement
 
-parseDefaultPair :: Parser (Statement a)
+parseDefaultPair :: Monoid ann => Parser (Statement ann)
 parseDefaultPair = tok' KWDefault *> tok' SymColon *> parseStatement
 
-parseCasePair :: Parser (CasePair ann)
+parseCasePair :: Monoid ann => Parser (CasePair ann)
 parseCasePair = do
   expr <- parseExpr <* tok' SymColon
   CasePair expr <$> parseStatement
 
-parseCase :: Parser (Statement ann)
+parseCase :: forall ann. Monoid ann => Parser (Statement ann)
 parseCase = do
   expr <- tok' KWCase *> parseExpr
-  cp <- manyTill parseCasePair (lookAhead ((parseDefaultPair $> ()) <|> tok' KWEndcase))
+  cp <- manyTill parseCasePair (lookAhead ((parseDefaultPair @ann $> ()) <|> tok' KWEndcase))
   def <- option Nothing $ Just <$> parseDefaultPair
   tok' KWEndcase
-  return (StmntCase CaseStandard expr cp def)
+  return (StmntCase mempty CaseStandard expr cp def)
 
-eventList :: TokenName -> Parser [Event]
+eventList :: Monoid ann => TokenName -> Parser [Event ann]
 eventList t = do
   l <- sepBy parseEvent' (tok t)
   if null l then fail "Could not parse list" else return l
 
-parseEvent :: Parser Event
+parseEvent :: Monoid ann => Parser (Event ann)
 parseEvent =
   (tok' SymAtAster $> EAll)
     <|> try (tok' SymAt *> tok' SymParenLAsterParenR $> EAll)
@@ -393,44 +393,44 @@ parseEvent =
     <|> try (tok' SymAt *> parens (foldr1 EOr <$> eventList KWOr))
     <|> try (tok' SymAt *> parens (foldr1 EComb <$> eventList SymComma))
 
-parseEvent' :: Parser Event
+parseEvent' :: Monoid ann => Parser (Event ann)
 parseEvent' =
   try (tok' KWPosedge *> fmap EPosEdge identifier)
     <|> try (tok' KWNegedge *> fmap ENegEdge identifier)
     <|> try (fmap EId identifier)
     <|> try (fmap EExpr parseExpr)
 
-parseEventCtrl :: Parser (Statement ann)
+parseEventCtrl :: Monoid ann => Parser (Statement ann)
 parseEventCtrl = do
   event <- parseEvent
   statement <- option Nothing maybeEmptyStatement
-  return $ EventCtrl event statement
+  return $ EventCtrl mempty event statement
 
-parseDelayCtrl :: Parser (Statement ann)
+parseDelayCtrl :: Monoid ann => Parser (Statement ann)
 parseDelayCtrl = do
   delay <- parseDelay
   statement <- option Nothing maybeEmptyStatement
-  return $ TimeCtrl delay statement
+  return $ TimeCtrl mempty delay statement
 
-parseBlocking :: Parser (Statement ann)
+parseBlocking :: Monoid ann => Parser (Statement ann)
 parseBlocking = do
   a <- parseAssign SymEq
   tok' SymSemi
-  return $ BlockAssign a
+  return $ BlockAssign mempty a
 
-parseNonBlocking :: Parser (Statement ann)
+parseNonBlocking :: Monoid ann => Parser (Statement ann)
 parseNonBlocking = do
   a <- parseAssign SymLtEq
   tok' SymSemi
-  return $ NonBlockAssign a
+  return $ NonBlockAssign mempty a
 
-parseSeq :: Parser (Statement ann)
+parseSeq :: Monoid ann => Parser (Statement ann)
 parseSeq = do
   seq' <- tok' KWBegin *> many parseStatement
   tok' KWEnd
-  return $ SeqBlock seq'
+  return $ SeqBlock mempty seq'
 
-parseStatement :: Parser (Statement ann)
+parseStatement :: Monoid ann => Parser (Statement ann)
 parseStatement =
   parseSeq
     <|> parseConditional
@@ -441,56 +441,56 @@ parseStatement =
     <|> try parseBlocking
     <|> parseNonBlocking
 
-maybeEmptyStatement :: Parser (Maybe (Statement ann))
+maybeEmptyStatement :: Monoid ann => Parser (Maybe (Statement ann))
 maybeEmptyStatement =
   (tok' SymSemi >> return Nothing) <|> (Just <$> parseStatement)
 
-parseAlways :: Parser (ModItem ann)
-parseAlways = tok' KWAlways *> (Always <$> parseStatement)
+parseAlways :: Monoid ann => Parser (ModItem ann)
+parseAlways = tok' KWAlways *> (Always mempty <$> parseStatement)
 
-parseInitial :: Parser (ModItem ann)
-parseInitial = tok' KWInitial *> (Initial <$> parseStatement)
+parseInitial :: Monoid ann => Parser (ModItem ann)
+parseInitial = tok' KWInitial *> (Initial mempty <$> parseStatement)
 
-namedModConn :: Parser ModConn
+namedModConn :: Monoid ann => Parser (ModConn ann)
 namedModConn = do
   target <- tok' SymDot *> identifier
   expr <- parens parseExpr
   return $ ModConnNamed target expr
 
-parseModConn :: Parser ModConn
+parseModConn :: Monoid ann => Parser (ModConn ann)
 parseModConn = try (fmap ModConn parseExpr) <|> namedModConn
 
-parseModInst :: Parser (ModItem ann)
+parseModInst :: Monoid ann => Parser (ModItem ann)
 parseModInst = do
   m <- identifier
   params <- option [] $ tok' SymPound *> parens (commaSep parseModConn)
   name <- identifier
   modconns <- parens (commaSep parseModConn)
   tok' SymSemi
-  return $ ModInst m params name modconns
+  return $ ModInst mempty m params name modconns
 
-parseParam :: Parser Parameter
+parseParam :: Monoid ann => Parser (Parameter ann)
 parseParam = do
   i <- tok' KWParameter *> identifier
   expr <- tok' SymEq *> parseConstExpr
   return $ Parameter i expr
 
-parseParam' :: Parser Parameter
+parseParam' :: Monoid ann => Parser (Parameter ann)
 parseParam' = do
   i <- identifier
   expr <- tok' SymEq *> parseConstExpr
   return $ Parameter i expr
 
-parseParams :: Parser [Parameter]
+parseParams :: Monoid ann => Parser [Parameter ann]
 parseParams = tok' SymPound *> parens (commaSep parseParam)
 
-parseParamDecl :: Parser (ModItem ann)
+parseParamDecl :: Monoid ann => Parser (ModItem ann)
 parseParamDecl =
-  ParamDecl <$> (tok' KWParameter *> commaSepNE parseParam' <* tok' SymSemi)
+  ParamDecl mempty <$> (tok' KWParameter *> commaSepNE parseParam' <* tok' SymSemi)
 
-parseModItem :: Parser (ModItem ann)
+parseModItem :: Monoid ann => Parser (ModItem ann)
 parseModItem =
-  try (ModCA <$> parseContAssign)
+  try (ModCA mempty <$> parseContAssign)
     <|> try parseDecl
     <|> parseAlways
     <|> parseInitial
@@ -501,22 +501,23 @@ parseModList :: Parser [Identifier]
 parseModList = list <|> return [] where list = parens $ commaSep identifier
 
 filterDecl :: PortDir -> ModItem ann -> Bool
-filterDecl p (Decl (Just p') _ _) = p == p'
+filterDecl p (Decl _ (Just p') _ _) = p == p'
 filterDecl _ _ = False
 
-modPorts :: PortDir -> [ModItem ann] -> [Port]
+modPorts :: PortDir -> [ModItem ann] -> [Port ann]
 modPorts p mis = filter (filterDecl p) mis ^.. traversed % #declPort
 
-parseModDecl :: Parser (ModDecl ann)
+parseModDecl :: Monoid ann => Parser (ModDecl ann)
 parseModDecl = do
   name <- tok KWModule *> identifier
   paramList <- option [] $ try parseParams
-  _ <- fmap defaultPort <$> parseModList
+  void parseModList
   tok' SymSemi
   modItem <- option [] . try $ many1 parseModItem
   tok' KWEndmodule
   return $
     ModDecl
+      mempty
       name
       (modPorts PortOut modItem)
       (modPorts PortIn modItem)
@@ -525,12 +526,12 @@ parseModDecl = do
 
 -- | Parses a 'String' into 'Verilog' by skipping any beginning whitespace
 -- and then parsing multiple Verilog source.
-parseVerilogSrc :: Parser (Verilog ann)
+parseVerilogSrc :: Monoid ann => Parser (Verilog ann)
 parseVerilogSrc = Verilog <$> many parseModDecl
 
 -- | Parse a 'String' containing verilog code. The parser currently only supports
 -- the subset of Verilog that is being generated randomly.
-parseVerilog ::
+parseVerilog :: Monoid ann =>
   -- | Name of parsed object.
   Text ->
   -- | Content to be parsed.
@@ -545,12 +546,12 @@ parseVerilog s =
     . preprocess [] (T.unpack s)
     . T.unpack
 
-parseVerilogFile :: Text -> IO (Verilog ann)
+parseVerilogFile :: Monoid ann => Text -> IO (Verilog ann)
 parseVerilogFile file = do
   src <- T.readFile $ T.unpack file
   case parseVerilog file src of
     Left s -> error $ T.unpack s
     Right r -> return r
 
-parseSourceInfoFile :: Text -> Text -> IO (SourceInfo ann)
+parseSourceInfoFile :: Monoid ann => Text -> Text -> IO (SourceInfo ann)
 parseSourceInfoFile top = fmap (SourceInfo top) . parseVerilogFile

@@ -1,7 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
@@ -9,8 +11,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 -- |
@@ -80,11 +80,11 @@ module Verismith.Verilog.AST
     ModConn (..),
 
     -- * Useful Lenses and Traversals
+    Annotated(..),
     aModule,
     getModule,
     getSourceId,
     mainModule,
-    Annotations (..),
   )
 where
 
@@ -98,13 +98,10 @@ import GHC.Generics (Generic)
 import Optics (Lens', Traversal', lens, traversed, (%), (%~), (&), (^..))
 import Optics.TH
 import Verismith.Verilog.BitVec
-import Control.Monad (void)
 
-class Functor m => Annotations m where
-  removeAnn :: m a -> m a
-  clearAnn :: m a -> m ()
-  clearAnn = void . removeAnn
-  collectAnn :: m a -> [a]
+class Annotated a where
+  type Ann a
+  annotation :: Lens' a (Ann a)
 
 -- | Identifier in Verilog. This is just a string of characters that can either
 -- be lowercase and uppercase for now. This might change in the future though,
@@ -112,7 +109,7 @@ class Functor m => Annotations m where
 newtype Identifier where
   Identifier :: {getIdentifier :: Text} -> Identifier
   deriving (Eq, Show, Ord, Data, Generic)
-  deriving newtype NFData
+  deriving newtype (NFData)
 
 makePrismLabels ''Identifier
 
@@ -128,7 +125,7 @@ instance Monoid Identifier where
 -- | Verilog syntax for adding a delay, which is represented as @#num@.
 newtype Delay = Delay {_getDelay :: Int}
   deriving (Eq, Show, Ord, Data, Generic)
-  deriving newtype NFData
+  deriving newtype (NFData)
 
 makePrismLabels ''Delay
 
@@ -186,87 +183,99 @@ data UnaryOperator
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
 -- | Constant expression, which are known before simulation at compile time.
-data ConstExpr
-  = ConstNum {-# UNPACK #-} !BitVec
-  | ParamId {-# UNPACK #-} !Identifier
-  | ConstConcat !(NonEmpty ConstExpr)
+data ConstExpr ann
+  = ConstNum
+      { annotation :: ann,
+        num :: {-# UNPACK #-} !BitVec
+      }
+  | ParamId
+      { annotation :: ann,
+        identifier :: {-# UNPACK #-} !Identifier
+      }
+  | ConstConcat
+      { annotation :: ann,
+        concatExprs :: !(NonEmpty (ConstExpr ann))
+      }
   | ConstUnOp
-      { operator :: !UnaryOperator,
-        expr :: !ConstExpr
+      { annotation :: ann,
+        operator :: !UnaryOperator,
+        expr :: !(ConstExpr ann)
       }
   | ConstBinOp
-      { lhs :: !ConstExpr,
+      { annotation :: ann,
+        lhs :: !(ConstExpr ann),
         binOp :: !BinaryOperator,
-        rhs :: !ConstExpr
+        rhs :: !(ConstExpr ann)
       }
   | ConstCond
-      { cond :: !ConstExpr,
-        trueExpr :: !ConstExpr,
-        falseExpr :: !ConstExpr
+      { annotation :: ann,
+        cond :: !(ConstExpr ann),
+        trueExpr :: !(ConstExpr ann),
+        falseExpr :: !(ConstExpr ann)
       }
-  | ConstStr {-# UNPACK #-} !Text
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+  | ConstStr
+      { annotation :: ann,
+        str :: {-# UNPACK #-} !Text
+      }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''ConstExpr
 
 $(makeBaseFunctor ''ConstExpr)
 
-constToExpr :: ConstExpr -> Expr
-constToExpr (ConstNum a) = Number a
-constToExpr (ParamId a) = Id a
-constToExpr (ConstConcat a) = Concat $ fmap constToExpr a
-constToExpr (ConstUnOp a b) = UnOp a $ constToExpr b
-constToExpr (ConstBinOp a b c) = BinOp (constToExpr a) b $ constToExpr c
-constToExpr (ConstCond a b c) =
-  Cond (constToExpr a) (constToExpr b) $ constToExpr c
-constToExpr (ConstStr a) = Str a
+constToExpr :: ConstExpr ann  -> Expr ann
+constToExpr (ConstNum ann a) = Number ann a
+constToExpr (ParamId ann a) = Id ann a
+constToExpr (ConstConcat ann a) = Concat ann $ fmap constToExpr a
+constToExpr (ConstUnOp ann a b) = UnOp ann a $ constToExpr b
+constToExpr (ConstBinOp ann a b c) = BinOp ann (constToExpr a) b $ constToExpr c
+constToExpr (ConstCond ann a b c) = Cond ann (constToExpr a) (constToExpr b) $ constToExpr c
+constToExpr (ConstStr ann a) = Str ann a
 
-exprToConst :: Expr -> ConstExpr
-exprToConst (Number a) = ConstNum a
-exprToConst (Id a) = ParamId a
-exprToConst (Concat a) = ConstConcat $ fmap exprToConst a
-exprToConst (UnOp a b) = ConstUnOp a $ exprToConst b
-exprToConst (BinOp a b c) = ConstBinOp (exprToConst a) b $ exprToConst c
-exprToConst (Cond a b c) =
-  ConstCond (exprToConst a) (exprToConst b) $ exprToConst c
-exprToConst (Str a) = ConstStr a
+exprToConst :: Expr ann -> ConstExpr ann
+exprToConst (Number ann a) = ConstNum ann a
+exprToConst (Id ann a) = ParamId ann a
+exprToConst (Concat ann a) = ConstConcat ann $ fmap exprToConst a
+exprToConst (UnOp ann a b) = ConstUnOp ann a $ exprToConst b
+exprToConst (BinOp ann a b c) = ConstBinOp ann (exprToConst a) b $ exprToConst c
+exprToConst (Cond ann a b c) = ConstCond ann (exprToConst a) (exprToConst b) $ exprToConst c
+exprToConst (Str ann a) = ConstStr ann a
 exprToConst _ = error "Not a constant expression"
 
-instance Num ConstExpr where
-  a + b = ConstBinOp a BinPlus b
-  a - b = ConstBinOp a BinMinus b
-  a * b = ConstBinOp a BinTimes b
-  negate = ConstUnOp UnMinus
+instance Monoid ann => Num (ConstExpr ann) where
+  a + b = ConstBinOp mempty a BinPlus b
+  a - b = ConstBinOp mempty a BinMinus b
+  a * b = ConstBinOp mempty a BinTimes b
+  negate = ConstUnOp mempty UnMinus
   abs = undefined
   signum = undefined
-  fromInteger = ConstNum . fromInteger
+  fromInteger = ConstNum mempty . fromInteger
 
-instance Semigroup ConstExpr where
-  (ConstConcat a) <> (ConstConcat b) = ConstConcat $ a <> b
-  (ConstConcat a) <> b = ConstConcat $ a <> (b :| [])
-  a <> (ConstConcat b) = ConstConcat $ a <| b
-  a <> b = ConstConcat $ a <| b :| []
+instance Monoid ann => Semigroup (ConstExpr ann) where
+  (ConstConcat ann1 a) <> (ConstConcat ann2 b) = ConstConcat (ann1 <> ann2) (a <> b)
+  (ConstConcat ann a) <> b = ConstConcat ann $ a <> (b :| [])
+  a <> (ConstConcat ann b) = ConstConcat ann $ a <| b
+  a <> b = ConstConcat mempty $ a <| b :| []
 
-instance Monoid ConstExpr where
-  mempty = ConstNum 0
+instance Monoid ann => Monoid (ConstExpr ann) where
+  mempty = ConstNum mempty 0
 
-instance IsString ConstExpr where
-  fromString = ConstStr . fromString
+instance Monoid ann => IsString (ConstExpr ann) where
+  fromString = ConstStr mempty . fromString
 
 -- | Range that can be associated with any port or left hand side. Contains the
 -- msb and lsb bits as 'ConstExpr'. This means that they can be generated using
 -- parameters, which can in turn be changed at synthesis time.
-data Range
-  = Range
-      { rangeMSB :: !ConstExpr,
-        rangeLSB :: !ConstExpr
-      }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data Range ann = Range
+  { rangeMSB :: !(ConstExpr ann),
+    rangeLSB :: !(ConstExpr ann)
+  }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
-instance Num Range where
-  (Range s1 a) + (Range s2 b) = Range (s1 + s2) $ a + b
-  (Range s1 a) - (Range s2 b) = Range (s1 - s2) . max 0 $ a - b
-  (Range s1 a) * (Range s2 b) = Range (s1 * s2) $ a * b
+instance Monoid ann => Num (Range ann) where
+  (Range s1 a) + (Range s2 b) = Range (s1 + s2) (a + b)
+  (Range s1 a) - (Range s2 b) = Range (s1 - s2) (a - b)
+  (Range s1 a) * (Range s2 b) = Range (s1 * s2) (a * b)
   negate = undefined
   abs = id
   signum _ = 1
@@ -274,65 +283,67 @@ instance Num Range where
 
 -- | Verilog expression, which can either be a primary expression, unary
 -- expression, binary operator expression or a conditional expression.
-data Expr
-  = Number {-# UNPACK #-} !BitVec
-  | Id {-# UNPACK #-} !Identifier
-  | VecSelect {-# UNPACK #-} !Identifier !Expr
-  | RangeSelect {-# UNPACK #-} !Identifier !Range
-  | Concat !(NonEmpty Expr)
-  | UnOp !UnaryOperator !Expr
-  | BinOp !Expr !BinaryOperator !Expr
-  | Cond !Expr !Expr !Expr
-  | Appl !Identifier !Expr
-  | Str {-# UNPACK #-} !Text
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data Expr ann
+  = Number ann {-# UNPACK #-} !BitVec
+  | Id ann {-# UNPACK #-} !Identifier
+  | VecSelect ann {-# UNPACK #-} !Identifier !(Expr ann)
+  | RangeSelect ann {-# UNPACK #-} !Identifier !(Range ann)
+  | Concat ann !(NonEmpty (Expr ann))
+  | UnOp ann !UnaryOperator !(Expr ann)
+  | BinOp ann !(Expr ann) !BinaryOperator !(Expr ann)
+  | Cond ann !(Expr ann) !(Expr ann) !(Expr ann)
+  | Appl ann !Identifier !(Expr ann)
+  | Str ann {-# UNPACK #-} !Text
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''Expr
 makePrismLabels ''Expr
 
 $(makeBaseFunctor ''Expr)
 
-instance Num Expr where
-  a + b = BinOp a BinPlus b
-  a - b = BinOp a BinMinus b
-  a * b = BinOp a BinTimes b
-  negate = UnOp UnMinus
+instance Annotated (Expr ann) where
+  type Ann (Expr ann) = ann
+
+instance Monoid ann => Num (Expr ann) where
+  a + b = BinOp mempty a BinPlus b
+  a - b = BinOp mempty a BinMinus b
+  a * b = BinOp mempty a BinTimes b
+  negate = UnOp mempty UnMinus
   abs = undefined
   signum = undefined
-  fromInteger = Number . fromInteger
+  fromInteger = Number mempty . fromInteger
 
-instance Semigroup Expr where
-  (Concat a) <> (Concat b) = Concat $ a <> b
-  (Concat a) <> b = Concat $ a <> (b :| [])
-  a <> (Concat b) = Concat $ a <| b
-  a <> b = Concat $ a <| b :| []
+instance Monoid ann => Semigroup (Expr ann) where
+  (Concat ann1 a) <> (Concat ann2 b) = Concat (ann1 <> ann2) (a <> b)
+  (Concat ann a) <> b = Concat ann $ a <> (b :| [])
+  a <> (Concat ann b) = Concat ann $ a <| b
+  a <> b = Concat mempty $ a <| b :| []
 
-instance Monoid Expr where
-  mempty = Number 0
+instance Monoid ann => Monoid (Expr ann) where
+  mempty = Number mempty 0
 
-instance IsString Expr where
-  fromString = Str . fromString
+instance Monoid ann => IsString (Expr ann) where
+  fromString = Str mempty . fromString
 
 -- | Verilog syntax for an event, such as @\@x@, which is used for always blocks
-data Event
+data Event ann
   = EId {-# UNPACK #-} !Identifier
-  | EExpr !Expr
+  | EExpr !(Expr ann)
   | EAll
   | EPosEdge {-# UNPACK #-} !Identifier
   | ENegEdge {-# UNPACK #-} !Identifier
-  | EOr !Event !Event
-  | EComb !Event !Event
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+  | EOr !(Event ann) !(Event ann)
+  | EComb !(Event ann) !(Event ann)
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 $(makeBaseFunctor ''Event)
 
 -- | Task call, which is similar to function calls.
-data Task
-  = Task
-      { name :: {-# UNPACK #-} !Identifier,
-        args :: [Expr]
-      }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data Task ann = Task
+  { name :: {-# UNPACK #-} !Identifier,
+    args :: [Expr ann]
+  }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''Task
 
@@ -342,22 +353,22 @@ makeFieldLabelsNoPrefix ''Task
 -- @
 -- {a, b, c} = 32'h94238;
 -- @
-data LVal
+data LVal ann
   = RegId {-# UNPACK #-} !Identifier
   | RegExpr
       { ident :: {-# UNPACK #-} !Identifier,
-        expr :: !Expr
+        expr :: !(Expr ann)
       }
   | RegSize
       { ident :: {-# UNPACK #-} !Identifier,
-        range :: {-# UNPACK #-} !Range
+        range :: {-# UNPACK #-} !(Range ann)
       }
-  | RegConcat [Expr]
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+  | RegConcat [Expr ann]
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''LVal
 
-instance IsString LVal where
+instance IsString (LVal ann) where
   fromString = RegId . fromString
 
 -- | Different port direction that are supported in Verilog.
@@ -384,14 +395,13 @@ makeFieldLabelsNoPrefix ''PortType
 --
 -- This is now implemented inside '(ModDecl ann)' itself, which uses a list of output
 -- and input ports.
-data Port
-  = Port
-      { portType :: !PortType,
-        signed :: !Bool,
-        size :: {-# UNPACK #-} !Range,
-        name :: {-# UNPACK #-} !Identifier
-      }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data Port ann = Port
+  { portType :: !PortType,
+    signed :: !Bool,
+    size :: {-# UNPACK #-} !(Range ann),
+    name :: {-# UNPACK #-} !Identifier
+  }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''Port
 
@@ -401,23 +411,22 @@ makeFieldLabelsNoPrefix ''Port
 -- @
 -- mod a(.y(y1), .x1(x11), .x2(x22));
 -- @
-data ModConn
-  = ModConn !Expr
+data ModConn ann
+  = ModConn !(Expr ann)
   | ModConnNamed
       { name :: {-# UNPACK #-} !Identifier,
-        expr :: !Expr
+        expr :: !(Expr ann)
       }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+  deriving (Eq, Show, Ord, Data, Functor, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''ModConn
 
-data Assign
-  = Assign
-      { lval :: !LVal,
-        delay :: !(Maybe Delay),
-        expr :: !Expr
-      }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data Assign ann = Assign
+  { lval :: !(LVal ann),
+    delay :: !(Maybe Delay),
+    expr :: !(Expr ann)
+  }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''Assign
 
@@ -426,22 +435,20 @@ makeFieldLabelsNoPrefix ''Assign
 -- @
 -- assign x = 2'b1;
 -- @
-data ContAssign
-  = ContAssign
-      { lval :: {-# UNPACK #-} !Identifier,
-        expr :: !Expr
-      }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data ContAssign ann = ContAssign
+  { lval :: {-# UNPACK #-} !Identifier,
+    expr :: !(Expr ann)
+  }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''ContAssign
 
 -- | Case pair which contains an expression followed by a statement which will
 -- get executed if the expression matches the expression in the case statement.
-data CasePair a
-  = CasePair
-      { expr :: !Expr,
-        stmnt :: !(Statement a)
-      }
+data CasePair ann = CasePair
+  { expr :: !(Expr ann),
+    stmnt :: !(Statement ann)
+  }
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 -- | Type of case statement, which determines how it is interpreted.
@@ -452,169 +459,135 @@ data CaseType
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
 -- | Statements in Verilog.
-data Statement a
+data Statement ann
   = -- | Time control (@#NUM@)
     TimeCtrl
-      { delay :: {-# UNPACK #-} !Delay,
-        timeCtrlStatement :: Maybe (Statement a)
+      { annotation :: ann,
+        delay :: {-# UNPACK #-} !Delay,
+        timeCtrlStatement :: Maybe (Statement ann)
       }
   | EventCtrl
-      { event :: !Event,
-        eventCtrlStatement :: Maybe (Statement a)
+      { annotation :: ann,
+        event :: !(Event ann),
+        eventCtrlStatement :: Maybe (Statement ann)
       }
   | -- | Sequential block (@begin ... end@)
-    SeqBlock [Statement a]
+    SeqBlock ann [Statement ann]
   | -- | blocking assignment (@=@)
-    BlockAssign !Assign
+    BlockAssign ann !(Assign ann)
   | -- | Non blocking assignment (@<=@)
-    NonBlockAssign !Assign
-  | TaskEnable !Task
-  | SysTaskEnable !Task
+    NonBlockAssign ann !(Assign ann)
+  | TaskEnable ann !(Task ann)
+  | SysTaskEnable ann !(Task ann)
   | CondStmnt
-      { cond :: Expr,
-        trueStatement :: Maybe (Statement a),
-        falseStatement :: Maybe (Statement a)
+      { annotation :: ann,
+        cond :: Expr ann,
+        trueStatement :: Maybe (Statement ann),
+        falseStatement :: Maybe (Statement ann)
       }
   | StmntCase
-      { caseType :: !CaseType,
-        expr :: !Expr,
-        casePairs :: ![CasePair a],
-        defaultCase :: !(Maybe (Statement a))
+      { annotation :: ann,
+        caseType :: !CaseType,
+        expr :: !(Expr ann),
+        casePairs :: ![CasePair ann],
+        defaultCase :: !(Maybe (Statement ann))
       }
   | -- | Loop bounds shall be statically computable for a for loop.
     ForLoop
-      { forAssign :: !Assign,
-        forExpr :: Expr,
-        forIncr :: !Assign,
-        forStmnt :: Statement a
+      { annotation :: ann,
+        forAssign :: !(Assign ann),
+        forExpr :: Expr ann,
+        forIncr :: !(Assign ann),
+        forStmnt :: Statement ann
       }
-  | StmntAnn a (Statement a)
   deriving (Eq, Show, Ord, Data, Functor, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''Statement
 
-instance Semigroup (Statement a) where
-  (SeqBlock a) <> (SeqBlock b) = SeqBlock $ a <> b
-  (SeqBlock a) <> b = SeqBlock $ a <> [b]
-  a <> (SeqBlock b) = SeqBlock $ a : b
-  a <> b = SeqBlock [a, b]
+instance Monoid ann => Semigroup (Statement ann) where
+  (SeqBlock ann1 a) <> (SeqBlock ann2 b) = SeqBlock (ann1 <> ann2) (a <> b)
+  (SeqBlock ann a) <> b = SeqBlock ann $ a <> [b]
+  a <> (SeqBlock ann b) = SeqBlock ann $ a : b
+  a <> b = SeqBlock mempty [a, b]
 
-instance Monoid (Statement a) where
-  mempty = SeqBlock []
-
-instance Annotations Statement where
-  removeAnn (StmntAnn _ s) = removeAnn s
-  removeAnn (TimeCtrl e s) = TimeCtrl e $ fmap removeAnn s
-  removeAnn (EventCtrl e s) = EventCtrl e $ fmap removeAnn s
-  removeAnn (SeqBlock s) = SeqBlock $ fmap removeAnn s
-  removeAnn (CondStmnt c ms1 ms2) = CondStmnt c (fmap removeAnn ms1) $ fmap removeAnn ms2
-  removeAnn (StmntCase ct ce cp cdef) = StmntCase ct ce (fmap removeAnn cp) $ fmap removeAnn cdef
-  removeAnn (ForLoop a b c s) = ForLoop a b c $ removeAnn s
-  removeAnn s = s
-  collectAnn (StmntAnn _ s) = collectAnn s
-  collectAnn (TimeCtrl _ s) = concatMap collectAnn s
-  collectAnn (EventCtrl _ s) = concatMap collectAnn s
-  collectAnn (SeqBlock s) = concatMap collectAnn s
-  collectAnn (CondStmnt _ ms1 ms2) = concatMap collectAnn ms1 <> concatMap collectAnn ms2
-  collectAnn (StmntCase _ _ cp cdef) =  concatMap collectAnn cp <> concatMap collectAnn cdef
-  collectAnn (ForLoop _ _ _ s) = collectAnn s
-  collectAnn _ = []
-
-instance Annotations CasePair where
-  removeAnn (CasePair e s) = CasePair e $ removeAnn s
-  collectAnn (CasePair _ s) = collectAnn s
+instance Monoid a => Monoid (Statement a) where
+  mempty = SeqBlock mempty []
 
 -- | Parameter that can be assigned in blocks or modules using @parameter@.
-data Parameter
-  = Parameter
-      { ident :: {-# UNPACK #-} !Identifier,
-        value :: ConstExpr
-      }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data Parameter ann = Parameter
+  { ident :: {-# UNPACK #-} !Identifier,
+    value :: ConstExpr ann
+  }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''Parameter
 
 -- | Local parameter that can be assigned anywhere using @localparam@. It cannot
 -- be changed by initialising the module.
-data LocalParam
-  = LocalParam
-      { ident :: {-# UNPACK #-} !Identifier,
-        value :: ConstExpr
-      }
-  deriving (Eq, Show, Ord, Data, Generic, NFData)
+data LocalParam ann = LocalParam
+  { ident :: {-# UNPACK #-} !Identifier,
+    value :: ConstExpr ann
+  }
+  deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''LocalParam
 
 -- | Module item which is the body of the module expression.
-data ModItem a
-  = ModCA !ContAssign
+data ModItem ann
+  = ModCA ann !(ContAssign ann)
   | ModInst
-      { instId :: {-# UNPACK #-} !Identifier,
-        instDecl :: [ModConn],
+      { annotation :: ann,
+        instId :: {-# UNPACK #-} !Identifier,
+        instDecl :: [ModConn ann],
         instName :: {-# UNPACK #-} !Identifier,
-        instConns :: [ModConn]
+        instConns :: [ModConn ann]
       }
-  | Initial !(Statement a)
-  | Always !(Statement a)
+  | Initial ann !(Statement ann)
+  | Always ann !(Statement ann)
   | Property
-      { propLabel :: {-# UNPACK #-} !Identifier,
-        propEvent :: !Event,
-        propBodyL :: Maybe Expr,
-        propBodyR :: Expr
+      { annotation :: ann,
+        propLabel :: {-# UNPACK #-} !Identifier,
+        propEvent :: !(Event ann),
+        propBodyL :: Maybe (Expr ann),
+        propBodyR :: Expr ann
       }
   | Decl
-      { declDir :: !(Maybe PortDir),
-        declPort :: !Port,
-        declVal :: Maybe ConstExpr
+      { annotation :: ann,
+        declDir :: !(Maybe PortDir),
+        declPort :: !(Port ann),
+        declVal :: Maybe (ConstExpr ann)
       }
-  | ParamDecl (NonEmpty Parameter)
-  | LocalParamDecl (NonEmpty LocalParam)
-  | ModItemAnn a (ModItem a)
+  | ParamDecl ann (NonEmpty (Parameter ann))
+  | LocalParamDecl ann (NonEmpty (LocalParam ann))
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makePrismLabels ''ModItem
 
 makeFieldLabelsNoPrefix ''ModItem
 
-instance Annotations ModItem where
-  removeAnn (ModItemAnn _ mi) = removeAnn mi
-  removeAnn (Initial s) = Initial $ removeAnn s
-  removeAnn (Always s) = Always $ removeAnn s
-  removeAnn mi = mi
-  collectAnn (ModItemAnn _ mi) = collectAnn mi
-  collectAnn (Initial s) = collectAnn s
-  collectAnn (Always s) = collectAnn s
-  collectAnn _ = []
-
 -- | 'module' module_identifier [list_of_ports] ';' { module_item } 'end_module'
-data ModDecl a
+data ModDecl ann
   = ModDecl
-      { id :: {-# UNPACK #-} !Identifier,
-        outPorts :: ![Port],
-        inPorts :: ![Port],
-        items :: ![ModItem a],
-        params :: ![Parameter]
+      { annotation :: ann,
+        id :: {-# UNPACK #-} !Identifier,
+        outPorts :: ![Port ann],
+        inPorts :: ![Port ann],
+        items :: ![ModItem ann],
+        params :: ![Parameter ann]
       }
-  | ModDeclAnn a (ModDecl a)
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''ModDecl
 makePrismLabels ''ModDecl
 
-instance Annotations ModDecl where
-  removeAnn (ModDecl i out inp mis params) = ModDecl i out inp (fmap removeAnn mis) params
-  removeAnn (ModDeclAnn _ mi) = mi
-  collectAnn (ModDecl _ _ _ mis _) = concatMap collectAnn mis
-  collectAnn (ModDeclAnn a mi) = a : collectAnn mi
-
-traverseModConn :: (Applicative f) => (Expr -> f Expr) -> ModConn -> f ModConn
+traverseModConn :: (Applicative f) => (Expr ann -> f (Expr ann)) -> ModConn ann -> f (ModConn ann)
 traverseModConn f (ModConn e) = ModConn <$> f e
 traverseModConn f (ModConnNamed a e) = ModConnNamed a <$> f e
 
-traverseModItem :: (Applicative f) => (Expr -> f Expr) -> ModItem ann -> f (ModItem ann)
-traverseModItem f (ModCA (ContAssign a e)) = ModCA . ContAssign a <$> f e
-traverseModItem f (ModInst a b c e) =
-  ModInst a b c <$> traverse (traverseModConn f) e
+traverseModItem :: (Applicative f) => (Expr ann -> f (Expr ann)) -> ModItem ann -> f (ModItem ann)
+traverseModItem f (ModCA ann (ContAssign a e)) = ModCA ann . ContAssign a <$> f e
+traverseModItem f (ModInst ann a b c e) =
+  ModInst ann a b c <$> traverse (traverseModConn f) e
 traverseModItem _ e = pure e
 
 -- | The complete sourcetext for the Verilog module.
@@ -624,17 +597,12 @@ newtype Verilog a = Verilog {getVerilog :: [ModDecl a]}
 
 makePrismLabels ''Verilog
 
-instance Annotations Verilog where
-  removeAnn (Verilog v) = Verilog $ fmap removeAnn v
-  collectAnn (Verilog v) = concatMap collectAnn v
-
 -- | Top level type which contains all the source code and associated
 -- information.
-data SourceInfo a
-  = SourceInfo
-      { top :: {-# UNPACK #-} !Text,
-        src :: !(Verilog a)
-      }
+data SourceInfo a = SourceInfo
+  { top :: {-# UNPACK #-} !Text,
+    src :: !(Verilog a)
+  }
   deriving (Eq, Show, Ord, Functor, Data, Generic, NFData)
 
 makeFieldLabelsNoPrefix ''SourceInfo
@@ -645,25 +613,21 @@ instance Semigroup (SourceInfo a) where
 instance Monoid (SourceInfo a) where
   mempty = SourceInfo mempty mempty
 
-instance Annotations SourceInfo where
-  removeAnn (SourceInfo t v) = SourceInfo t $ removeAnn v
-  collectAnn (SourceInfo _ v) = collectAnn v
-
 -- | Attributes which can be set to various nodes in the AST.
 --
 -- @
 -- (* synthesis *)
 -- @
-data Attribute
-  = AttrAssign Identifier ConstExpr
+data Attribute ann
+  = AttrAssign Identifier (ConstExpr ann)
   | AttrName Identifier
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
 -- | Annotations which can be added to the AST. These are supported in all the
 -- nodes of the AST and a custom type can be declared for them.
-data Annotation a
-  = Ann a
-  | AnnAttrs [Attribute]
+data Annotation ann
+  = Ann ann
+  | AnnAttrs [Attribute ann]
   deriving (Eq, Show, Ord, Data, Generic, NFData)
 
 getModule :: Traversal' (Verilog a) (ModDecl a)
@@ -681,14 +645,12 @@ aModule t = lens get_ set_
   where
     set_ (SourceInfo top main) v =
       SourceInfo top (main & getModule %~ update t.getIdentifier v)
-    update top v m@(ModDecl (Identifier i) _ _ _ _)
+    update top v m@(ModDecl _ (Identifier i) _ _ _ _)
       | i == top = v
       | otherwise = m
-    update top v (ModDeclAnn _ m) = update top v m
     get_ (SourceInfo _ main) =
       head . filter (f t.getIdentifier) $ main ^.. getModule
-    f top (ModDecl (Identifier i) _ _ _ _) = i == top
-    f top (ModDeclAnn _ m) = f top m
+    f top (ModDecl _ (Identifier i) _ _ _ _) = i == top
 
 -- | May need to change this to Traversal to be safe. For now it will fail when
 -- the main has not been properly set with.
@@ -697,10 +659,8 @@ mainModule = lens get_ set_
   where
     set_ (SourceInfo top main) v =
       SourceInfo top (main & getModule %~ update top v)
-    update top v m@(ModDecl (Identifier i) _ _ _ _)
+    update top v m@(ModDecl _ (Identifier i) _ _ _ _)
       | i == top = v
       | otherwise = m
-    update top v (ModDeclAnn _ m) = update top v m
     get_ (SourceInfo top main) = head . filter (f top) $ main ^.. getModule
-    f top (ModDecl (Identifier i) _ _ _ _) = i == top
-    f top (ModDeclAnn _ m) = f top m
+    f top (ModDecl _ (Identifier i) _ _ _ _) = i == top

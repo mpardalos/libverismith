@@ -15,18 +15,19 @@ module Verismith.Verilog.Eval
 where
 
 import Data.Bits
-import Data.Foldable (fold)
+import Data.Foldable (fold, find)
 import Data.Functor.Foldable hiding (fold)
-import Data.Maybe (listToMaybe)
 import Verismith.Verilog.AST
 import Verismith.Verilog.BitVec
+import Data.Generics.Uniplate.Data (transformBi)
+import Data.Data (Data)
 
-type Bindings = [Parameter]
+type Bindings ann = [Parameter ann]
 
-paramIdent_ :: Parameter -> Identifier
+paramIdent_ :: Parameter ann -> Identifier
 paramIdent_ (Parameter i _) = i
 
-paramValue_ :: Parameter -> ConstExpr
+paramValue_ :: Parameter ann -> ConstExpr ann
 paramValue_ (Parameter _ v) = v
 
 applyUnary :: (Num a, FiniteBits a) => UnaryOperator -> a -> a
@@ -95,33 +96,19 @@ applyBinary BinASL = toInt shiftL
 applyBinary BinASR = toInt shiftR
 
 -- | Evaluates a 'ConstExpr' using a context of 'Bindings' as input.
-evaluateConst :: Bindings -> ConstExprF BitVec -> BitVec
-evaluateConst _ (ConstNumF b) = b
-evaluateConst p (ParamIdF i) =
-  cata (evaluateConst p) . maybe 0 paramValue_ . listToMaybe $
-    filter
-      ((== i) . paramIdent_)
-      p
-evaluateConst _ (ConstConcatF c) = fold c
-evaluateConst _ (ConstUnOpF unop c) = applyUnary unop c
-evaluateConst _ (ConstBinOpF a binop b) = applyBinary binop a b
-evaluateConst _ (ConstCondF a b c) = if a > 0 then b else c
-evaluateConst _ (ConstStrF _) = 0
-
--- | Apply a function to all the bitvectors. Would be fixed by having a
--- 'Functor' instance for a polymorphic 'ConstExpr'.
-applyBitVec :: (BitVec -> BitVec) -> ConstExpr -> ConstExpr
-applyBitVec f (ConstNum b) = ConstNum $ f b
-applyBitVec f (ConstConcat c) = ConstConcat $ fmap (applyBitVec f) c
-applyBitVec f (ConstUnOp unop c) = ConstUnOp unop $ applyBitVec f c
-applyBitVec f (ConstBinOp a binop b) =
-  ConstBinOp (applyBitVec f a) binop (applyBitVec f b)
-applyBitVec f (ConstCond a b c) = ConstCond (abv a) (abv b) (abv c)
-  where
-    abv = applyBitVec f
-applyBitVec _ a = a
+evaluateConst :: Bindings ann -> ConstExprF ann BitVec -> BitVec
+evaluateConst _ (ConstNumF _ b) = b
+evaluateConst p (ParamIdF _ i) =
+  case find ((== i) . paramIdent_) p of
+    Just param -> cata (evaluateConst p) (paramValue_ param)
+    Nothing -> 0
+evaluateConst _ (ConstConcatF _ c) = fold c
+evaluateConst _ (ConstUnOpF _ unop c) = applyUnary unop c
+evaluateConst _ (ConstBinOpF _ a binop b) = applyBinary binop a b
+evaluateConst _ (ConstCondF _ a b c) = if a > 0 then b else c
+evaluateConst _ (ConstStrF _ _) = 0
 
 -- | This probably could be implemented using some recursion scheme in the
 -- future. It would also be fixed by having a polymorphic expression type.
-resize :: Int -> ConstExpr -> ConstExpr
-resize n = applyBitVec (resize' n) where resize' n' (BitVec _ a) = BitVec n' a
+resize :: Data ann => Int -> ConstExpr ann -> ConstExpr ann
+resize n = transformBi @_ @BitVec (\(BitVec _ a) -> BitVec n a)
