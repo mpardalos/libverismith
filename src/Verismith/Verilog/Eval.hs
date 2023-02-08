@@ -20,7 +20,6 @@ import Data.Functor.Foldable hiding (fold)
 import Verismith.Verilog.AST
 import Verismith.Verilog.BitVec
 import Data.Generics.Uniplate.Data (transformBi)
-import Data.Data (Data)
 
 type Bindings ann = [Parameter ann]
 
@@ -110,5 +109,5 @@ evaluateConst _ (ConstStrF _ _) = 0
 
 -- | This probably could be implemented using some recursion scheme in the
 -- future. It would also be fixed by having a polymorphic expression type.
-resize :: Data ann => Int -> ConstExpr ann -> ConstExpr ann
+resize :: Annotation ann => Int -> ConstExpr ann -> ConstExpr ann
 resize n = transformBi @_ @BitVec (\(BitVec _ a) -> BitVec n a)

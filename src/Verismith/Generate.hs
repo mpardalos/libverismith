@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoFieldSelectors #-}
@@ -30,6 +31,13 @@ module Verismith.Generate
     EMIContext (..),
     Context (..),
     StateGen,
+    ConfProperty (..),
+    Config (..),
+    ProbExpr (..),
+    ProbMod (..),
+    ProbModItem (..),
+    ProbStatement (..),
+    Probability (..),
 
     -- ** Generate Functions
     largeNum,
@@ -89,15 +97,15 @@ import Hedgehog (Gen, GenT, MonadGen, Seed)
 import Hedgehog qualified as Hog
 import Hedgehog.Gen qualified as Hog
 import Hedgehog.Range qualified as Hog
-import Optics ((^..), traversed, (%), view, use, (&), (.~), toListOf)
+import Optics (toListOf, traversed, use, view, (%), (&), (.~), (^..))
+import Optics.Operators.Unsafe ((^?!))
+import Optics.State.Operators ((%=), (.=))
 import Verismith.Internal
 import Verismith.Verilog.AST
 import Verismith.Verilog.BitVec
 import Verismith.Verilog.Eval
 import Verismith.Verilog.Internal
 import Verismith.Verilog.Mutate
-import Optics.State.Operators ((%=), (.=))
-import Optics.Operators.Unsafe ((^?!))
 
 -- | Probability of different expressions nodes.
 data ProbExpr = ProbExpr
@@ -435,10 +443,11 @@ rangeSelect ps ports = do
   let s = calcRange ps (Just 32) $ p.size
   msb <- Hog.int (Hog.constantFrom (s `div` 2) 0 (s - 1))
   lsb <- Hog.int (Hog.constantFrom (msb `div` 2) 0 msb)
-  return $ RangeSelect () p.name $
-    Range
-      (fromIntegral msb)
-      (fromIntegral lsb)
+  return $
+    RangeSelect () p.name $
+      Range
+        (fromIntegral msb)
+        (fromIntegral lsb)
 
 -- | Generate a random expression from the 'Context' with a guarantee that it
 -- will terminate using the list of safe 'Expr'.
@@ -477,7 +486,7 @@ makeIdentifier :: Text -> StateGen Identifier
 makeIdentifier prefix = do
   context <- get
   let ident = Identifier $ prefix <> showT (context.nameCounter)
-  #nameCounter %= (+1)
+  #nameCounter %= (+ 1)
   return ident
 
 newPort_ :: Bool -> PortType -> Identifier -> StateGen (Port ())
@@ -594,9 +603,9 @@ assignment blk = do
 -- | Generate a random 'Statement' safely, by also increasing the depth counter.
 seqBlock :: StateGen (Statement ())
 seqBlock = do
-  #stmntDepth %= (+1)
+  #stmntDepth %= (+ 1)
   tstat <- SeqBlock () <$> someI 20 statement
-  #stmntDepth %= (+1)
+  #stmntDepth %= (+ 1)
   return tstat
 
 -- | Generate a random conditional 'Statement'. The nameCounter is reset between
@@ -621,7 +630,8 @@ forLoop :: StateGen (Statement ())
 forLoop = do
   num <- Hog.int (Hog.linear 0 20)
   var <- lvalFromPort <$> nextBPort (Just "forvar")
-  ForLoop ()
+  ForLoop
+    ()
     (Assign var Nothing 0)
     (BinOp () (varId var) BinLT $ fromIntegral num)
     (Assign var Nothing $ BinOp () (varId var) BinPlus 1)
@@ -748,7 +758,7 @@ modInst = do
       chosenMod <- moduleDef Nothing
       ncont <- get
       let genMods = ncont.modules
-      #modDepth %= (1+)
+      #modDepth %= (1 +)
       #parameters .= params
       #wires .= w
       #nonblocking .= nb

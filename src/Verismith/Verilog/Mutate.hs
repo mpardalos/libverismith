@@ -43,7 +43,7 @@ import Data.Generics.Uniplate.Data (transform, transformBi)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Optics (traversed, (%), (%~), (&), (.~), (^..), _2, (^.))
+import Optics (traversed, (%), (%~), (&), (.~), (^..), _2)
 import Optics.Operators.Unsafe ((^?!))
 import Verismith.Circuit.Internal
 import Verismith.Internal
@@ -51,7 +51,7 @@ import Verismith.Verilog.AST
 import Verismith.Verilog.BitVec
 import Verismith.Verilog.Internal
 
-mutExpr :: (Data ann, Data a) => (Expr ann -> Expr ann) -> a -> a
+mutExpr :: (Annotation ann, Data a) => (Expr ann -> Expr ann) -> a -> a
 mutExpr = transformBi
 
 -- | Return if the 'Identifier' is in a '(ModDecl ann)'.
@@ -81,7 +81,7 @@ idTrans i expr (Id ann id')
 idTrans _ _ e = e
 
 -- | Replaces the identifier recursively in an expression.
-replace :: Data ann => Identifier -> Expr ann -> Expr ann -> Expr ann
+replace :: Annotation ann => Identifier -> Expr ann -> Expr ann -> Expr ann
 replace ident e = transform (idTrans ident e)
 
 -- | Nest expressions for a specific 'Identifier'. If the 'Identifier' is not
@@ -90,23 +90,22 @@ replace ident e = transform (idTrans ident e)
 -- This could be improved by instead of only using the last assignment to the
 -- wire that one finds, to use the assignment to the wire before the current
 -- expression. This would require a different approach though.
-nestId :: (Data ann, Monoid ann) => Identifier -> ModDecl ann -> ModDecl ann
+nestId :: Annotation ann => Identifier -> ModDecl ann -> ModDecl ann
 nestId i m
   | not $ inPort i m =
-    let expr = fromMaybe def . findAssign i $ m.items
-     in m & get %~ replace i expr
+      let expr = fromMaybe (Id def i) . findAssign i $ m.items
+       in m & get %~ replace i expr
   | otherwise =
-    m
+      m
   where
     get = #items % traversed % #_ModCA % _2 % #expr
-    def = Id mempty i
 
 -- | Replaces an identifier by a expression in all the module declaration.
-nestSource :: (Data ann, Monoid ann) => Identifier -> Verilog ann -> Verilog ann
+nestSource :: Annotation ann => Identifier -> Verilog ann -> Verilog ann
 nestSource i src = src & getModule %~ nestId i
 
 -- | Nest variables in the format @w[0-9]*@ up to a certain number.
-nestUpTo :: (Data ann, Monoid ann) => Int -> Verilog ann -> Verilog ann
+nestUpTo :: Annotation ann => Int -> Verilog ann -> Verilog ann
 nestUpTo i src =
   foldl (flip nestSource) src $ Identifier . fromNode <$> [1 .. i]
 
@@ -132,17 +131,17 @@ allVars m =
 -- endmodule
 -- <BLANKLINE>
 -- <BLANKLINE>
-instantiateMod :: Monoid ann => ModDecl ann -> ModDecl ann -> ModDecl ann
+instantiateMod :: Annotation ann => ModDecl ann -> ModDecl ann -> ModDecl ann
 instantiateMod m main = main & #items %~ ((out ++ regIn ++ [inst]) ++)
   where
-    out = Decl mempty Nothing <$> m.outPorts <*> pure Nothing
+    out = Decl def Nothing <$> m.outPorts <*> pure Nothing
     regIn =
-      Decl mempty Nothing
+      Decl def Nothing
         <$> (m.inPorts & traversed % #portType .~ Reg)
         <*> pure Nothing
     inst =
       ModInst
-        mempty
+        def
         (m ^?! #id)
         []
         (m ^?! #id <> (Identifier . showT $ count + 1))
@@ -151,7 +150,7 @@ instantiateMod m main = main & #items %~ ((out ++ regIn ++ [inst]) ++)
       length
         . filter (== m ^?! #id)
         $ main ^.. #items % traversed % #instId
-    conns = uncurry ModConnNamed . fmap (Id mempty) <$> zip (allVars m) (allVars m)
+    conns = uncurry ModConnNamed . fmap (Id def) <$> zip (allVars m) (allVars m)
 
 -- | Instantiate without adding wire declarations. It also does not count the
 -- current instantiations of the same module.
@@ -159,12 +158,12 @@ instantiateMod m main = main & #items %~ ((out ++ regIn ++ [inst]) ++)
 -- >>> GenVerilog $ instantiateMod_ m
 -- m m(y, x);
 -- <BLANKLINE>
-instantiateMod_ :: Monoid ann => ModDecl ann -> ModItem ann
-instantiateMod_ m = ModInst mempty (m ^?! #id) [] (m ^?! #id) conns
+instantiateMod_ :: Annotation ann => ModDecl ann -> ModItem ann
+instantiateMod_ m = ModInst def (m ^?! #id) [] (m ^?! #id) conns
   where
     conns =
       ModConn
-        . Id mempty
+        . Id def
         <$> (m ^.. #outPorts % traversed % #name)
           ++ (m ^.. #inPorts % traversed % #name)
 
@@ -174,10 +173,10 @@ instantiateMod_ m = ModInst mempty (m ^?! #id) [] (m ^?! #id) conns
 -- >>> GenVerilog $ instantiateModSpec_ "_" m
 -- m m(.y(y), .x(x));
 -- <BLANKLINE>
-instantiateModSpec_ :: Monoid ann => Bool -> Text -> ModDecl ann -> ModItem ann
-instantiateModSpec_ named outChar m = ModInst mempty (m ^?! #id) [] (m ^?! #id) conns
+instantiateModSpec_ :: Annotation ann => Bool -> Text -> ModDecl ann -> ModItem ann
+instantiateModSpec_ named outChar m = ModInst def (m ^?! #id) [] (m ^?! #id) conns
   where
-    conns = (if named then zipWith ModConnNamed ids else map ModConn) (Id mempty <$> instIds)
+    conns = (if named then zipWith ModConnNamed ids else map ModConn) (Id def <$> instIds)
     ids = filterChar outChar (name #outPorts) <> name #inPorts
     instIds = name #outPorts <> name #inPorts
     name v = m ^.. v % traversed % #name
@@ -195,11 +194,11 @@ filterChar t ids =
 -- endmodule
 -- <BLANKLINE>
 -- <BLANKLINE>
-initMod :: Monoid ann => ModDecl ann -> ModDecl ann
+initMod :: Annotation ann => ModDecl ann -> ModDecl ann
 initMod m = m & #items %~ ((out ++ inp) ++)
   where
-    out = Decl mempty (Just PortOut) <$> m.outPorts <*> pure Nothing
-    inp = Decl mempty (Just PortIn) <$> m.inPorts <*> pure Nothing
+    out = Decl def (Just PortOut) <$> m.outPorts <*> pure Nothing
+    inp = Decl def (Just PortIn) <$> m.inPorts <*> pure Nothing
 
 -- | Make an 'Identifier' from and existing Identifier and an object with a
 -- 'Show' instance to make it unique.
@@ -208,8 +207,8 @@ makeIdFrom a i = (i <>) . Identifier . ("_" <>) $ showT a
 
 -- | Make top level module for equivalence verification. Also takes in how many
 -- modules to instantiate.
-makeTop :: Monoid ann => Bool -> Int -> ModDecl ann -> ModDecl ann
-makeTop named i m = ModDecl mempty m.id ys m.inPorts modIt []
+makeTop :: Annotation ann => Bool -> Int -> ModDecl ann -> ModDecl ann
+makeTop named i m = ModDecl def m.id ys m.inPorts modIt []
   where
     ys = yPort . flip makeIdFrom "y" <$> [1 .. i]
     modIt = instantiateModSpec_ named "_" . modN <$> [1 .. i]
@@ -218,22 +217,23 @@ makeTop named i m = ModDecl mempty m.id ys m.inPorts modIt []
 
 -- | Make a top module with an assert that requires @y_1@ to always be equal to
 -- @y_2@, which can then be proven using a formal verification tool.
-makeTopAssert :: Monoid ann => ModDecl ann -> ModDecl ann
+makeTopAssert :: Annotation ann => ModDecl ann -> ModDecl ann
 makeTopAssert = (#items %~ (++ [assert])) . makeTop False 2
   where
     assert =
-      Always mempty . EventCtrl mempty e . Just $
-        SeqBlock mempty
-          [TaskEnable mempty $ Task "assert" [BinOp mempty (Id mempty "y_1") BinEq (Id mempty "y_2")]]
+      Always def . EventCtrl def e . Just $
+        SeqBlock
+          def
+          [TaskEnable def $ Task "assert" [BinOp def (Id def "y_1") BinEq (Id def "y_2")]]
     e = EPosEdge "clk"
 
 -- | Provide declarations for all the ports that are passed to it. If they are
 -- registers, it should assign them to 0.
-declareMod :: Monoid ann => [Port ann] -> ModDecl ann -> ModDecl ann
+declareMod :: Annotation ann => [Port ann] -> ModDecl ann -> ModDecl ann
 declareMod ports = initMod . (#items %~ (fmap decl ports ++))
   where
-    decl p@(Port Reg _ _ _) = Decl mempty Nothing p (Just 0)
-    decl p = Decl mempty Nothing p Nothing
+    decl p@(Port Reg _ _ _) = Decl def Nothing p (Just 0)
+    decl p = Decl def Nothing p Nothing
 
 -- | Simplify an 'Expr' by using constants to remove 'BinaryOperator' and
 -- simplify expressions. To make this work effectively, it should be run until
@@ -244,19 +244,19 @@ declareMod ports = initMod . (#items %~ (fmap decl ports ++))
 --
 -- >>> GenVerilog . simplify $ (Id "y") + (Id "x")
 -- (y + x)
-simplify :: Monoid ann => Expr ann -> Expr ann
+simplify :: Annotation ann => Expr ann -> Expr ann
 simplify (BinOp _ (Number _ (BitVec _ 1)) BinAnd e) = e
 simplify (BinOp _ e BinAnd (Number _ (BitVec _ 1))) = e
-simplify (BinOp ann1 (Number ann2 (BitVec _ 0)) BinAnd e) = Number (ann1 <> ann2 <> e ^. annotation) 0
-simplify (BinOp ann1 e BinAnd (Number ann2 (BitVec _ 0))) = Number (ann1 <> ann2 <> e ^. annotation) 0
+simplify (BinOp _ (Number _ (BitVec _ 0)) BinAnd _) = Number def 0
+simplify (BinOp _ _ BinAnd (Number _ (BitVec _ 0))) = Number def 0
 simplify (BinOp _ e BinPlus (Number _ (BitVec _ 0))) = e
 simplify (BinOp _ (Number _ (BitVec _ 0)) BinPlus e) = e
 simplify (BinOp _ e BinMinus (Number _ (BitVec _ 0))) = e
 simplify (BinOp _ (Number _ (BitVec _ 0)) BinMinus e) = e
 simplify (BinOp _ e BinTimes (Number _ (BitVec _ 1))) = e
 simplify (BinOp _ (Number _ (BitVec _ 1)) BinTimes e) = e
-simplify (BinOp ann1 e BinTimes (Number ann2 (BitVec _ 0))) = Number (ann1 <> ann2 <> e ^. annotation) 0
-simplify (BinOp ann1 (Number ann2 (BitVec _ 0)) BinTimes e) = Number (ann1 <> ann2 <> e ^. annotation) 0
+simplify (BinOp _ _ BinTimes (Number _ (BitVec _ 0))) = Number def 0
+simplify (BinOp _ (Number _ (BitVec _ 0)) BinTimes _) = Number def 0
 simplify (BinOp _ e BinOr (Number _ (BitVec _ 0))) = e
 simplify (BinOp _ (Number _ (BitVec _ 0)) BinOr e) = e
 simplify (BinOp _ e BinLSL (Number _ (BitVec _ 0))) = e
@@ -276,31 +276,31 @@ simplify e = e
 --
 -- >>> GenVerilog . removeId ["x"] $ Id "x" + Id "y"
 -- (x + (1'h0))
-removeId :: (Data ann, Monoid ann) => [Identifier] -> Expr ann -> Expr ann
+removeId :: Annotation ann => [Identifier] -> Expr ann -> Expr ann
 removeId i = transform trans
   where
     trans (Id ann ident)
-      | ident `notElem` i = Number mempty 0
+      | ident `notElem` i = Number def 0
       | otherwise = Id ann ident
     trans e = e
 
-combineAssigns :: Monoid ann => Port ann -> [ModItem ann] -> [ModItem ann]
+combineAssigns :: (Annotation ann, Semigroup (AnnExpr ann)) => Port ann -> [ModItem ann] -> [ModItem ann]
 combineAssigns p a =
   a
-    <> [ ModCA mempty
+    <> [ ModCA def
            . ContAssign p.name
-           . UnOp mempty UnXor
-           $ foldMap (Id mempty) assigns
+           . UnOp def UnXor
+           $ foldMap (Id def) assigns
        ]
   where
     assigns = a ^.. traversed % #_ModCA % _2 % #lval
 
-combineAssigns_ :: Monoid ann => Bool -> Port ann -> [Port ann] -> ModItem ann
+combineAssigns_ :: (Annotation ann, Semigroup (AnnExpr ann)) => Bool -> Port ann -> [Port ann] -> ModItem ann
 combineAssigns_ comb p ps =
-  ModCA mempty
+  ModCA def
     . ContAssign p.name
-    . (if comb then UnOp mempty UnXor else id)
-    $ foldMap (Id mempty) (ps ^.. traversed % #name)
+    . (if comb then UnOp def UnXor else id)
+    $ foldMap (Id def) (ps ^.. traversed % #name)
 
 fromPort :: Port ann -> Identifier
 fromPort (Port _ _ _ i) = i

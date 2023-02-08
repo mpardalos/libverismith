@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- |
 -- Module      : Verismith.Verilog.CodeGen
@@ -38,15 +39,15 @@ class Source a where
 
 -- | Map a 'Maybe (Statement ann)' to 'Text'. If it is 'Just statement', the generated
 -- statements are returned. If it is 'Nothing', then @;\n@ is returned.
-defMap :: Show ann => Maybe (Statement ann) -> Doc a
+defMap :: Maybe (Statement ann) -> Doc a
 defMap = maybe semi statement
 
 -- | Convert the 'Verilog ann' type to 'Text' so that it can be rendered.
-verilogSrc :: Show ann => Verilog ann -> Doc a
+verilogSrc :: Show (AnnModDecl ann) => Verilog ann -> Doc a
 verilogSrc (Verilog modules) = vsep . punctuate line $ moduleDecl <$> modules
 
 -- | Generate the 'ModDecl ann' for a module and convert it to 'Text'.
-moduleDecl :: Show ann => ModDecl ann -> Doc a
+moduleDecl :: Show (AnnModDecl ann) => ModDecl ann -> Doc a
 moduleDecl (ModDecl ann i outP inP items ps) =
   vsep
     [ hsep ["/*", pretty $ show ann, "*/"],
@@ -111,7 +112,7 @@ portDir PortOut = "output"
 portDir PortInOut = "inout"
 
 -- | Generate a '(ModItem ann)'.
-moduleItem :: Show ann => ModItem ann -> Doc a
+moduleItem :: ModItem ann -> Doc a
 moduleItem (ModCA _ ca) = contAssign ca
 moduleItem (ModInst _ i param name conn) =
   (<> semi) $
@@ -263,11 +264,11 @@ caseType CaseStandard = "case"
 caseType CaseX = "casex"
 caseType CaseZ = "casez"
 
-casePair :: Show ann => CasePair ann -> Doc a
+casePair :: CasePair ann -> Doc a
 casePair (CasePair e s) =
   vsep [hsep [expr e, colon], indent 2 $ statement s]
 
-statement :: Show ann => Statement ann -> Doc a
+statement :: Statement ann -> Doc a
 statement (TimeCtrl _ d stat) = hsep [delay d, defMap stat]
 statement (EventCtrl _ e stat) = hsep [event e, defMap stat]
 statement (SeqBlock _ s) =
@@ -324,7 +325,7 @@ instance Source Identifier where
 instance Source (Task ann) where
   genSource = showT . task
 
-instance Show ann => Source (Statement ann) where
+instance Source (Statement ann) where
   genSource = showT . statement
 
 instance Source PortType where
@@ -351,7 +352,7 @@ instance Source (Expr ann) where
 instance Source (ContAssign ann) where
   genSource = showT . contAssign
 
-instance Show ann => Source (ModItem ann) where
+instance Source (ModItem ann) where
   genSource = showT . moduleItem
 
 instance Source PortDir where
@@ -360,13 +361,13 @@ instance Source PortDir where
 instance Source (Port ann) where
   genSource = showT . port
 
-instance Show ann => Source (ModDecl ann) where
+instance Show (AnnModDecl ann) => Source (ModDecl ann) where
   genSource = showT . moduleDecl
 
-instance Show ann => Source (Verilog ann) where
+instance Show (AnnModDecl ann) => Source (Verilog ann) where
   genSource = showT . verilogSrc
 
-instance Show ann => Source (SourceInfo ann) where
+instance Show (AnnModDecl ann) => Source (SourceInfo ann) where
   genSource (SourceInfo _ src) = genSource src
 
 newtype GenVerilog a = GenVerilog {unGenVerilog :: a}

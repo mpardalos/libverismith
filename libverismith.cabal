@@ -51,6 +51,7 @@ library
                  , containers
                  , template-haskell >=2.13.0 && <2.19
                  , uniplate
+                 , data-default-class
     build-tool-depends: alex:alex >=3 && <4
     build-depends:    base ==4.16.*
     hs-source-dirs:   src

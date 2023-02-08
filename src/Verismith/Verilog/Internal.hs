@@ -30,15 +30,15 @@ import Optics ((.~), (%~))
 import Data.Text (Text)
 import Verismith.Verilog.AST
 
-regDecl :: Monoid ann => Identifier -> ModItem ann
-regDecl i = Decl mempty Nothing (Port Reg False (Range 1 0) i) Nothing
+regDecl :: Annotation ann => Identifier -> ModItem ann
+regDecl i = Decl def Nothing (Port Reg False (Range 1 0) i) Nothing
 
-wireDecl :: Monoid ann => Identifier -> ModItem ann
-wireDecl i = Decl mempty Nothing (Port Wire False (Range 1 0) i) Nothing
+wireDecl :: Annotation ann => Identifier -> ModItem ann
+wireDecl i = Decl def Nothing (Port Wire False (Range 1 0) i) Nothing
 
 -- | Create an empty module.
-emptyMod :: Monoid ann => ModDecl ann
-emptyMod = ModDecl mempty "" [] [] [] []
+emptyMod :: Annotation ann => ModDecl ann
+emptyMod = ModDecl def "" [] [] [] []
 
 -- | Set a module name for a module declaration.
 setModName :: Text -> ModDecl ann -> ModDecl ann
@@ -51,10 +51,10 @@ addModPort port = #inPorts %~ (:) port
 addModDecl :: ModDecl ann -> Verilog ann -> Verilog ann
 addModDecl desc = #_Verilog %~ (:) desc
 
-testBench :: Monoid ann => ModDecl ann
+testBench :: Annotation ann => ModDecl ann
 testBench =
   ModDecl
-    mempty
+    def
     "main"
     []
     []
@@ -62,32 +62,32 @@ testBench =
       regDecl "b",
       wireDecl "c",
       ModInst
-        mempty
+        def
         "and"
         []
         "and_gate"
-        [ModConn $ Id mempty "c", ModConn $ Id mempty "a", ModConn $ Id mempty "b"],
-      Initial mempty $
-        SeqBlock mempty
-          [ BlockAssign mempty (Assign (RegId "a") Nothing 1),
-            BlockAssign mempty (Assign (RegId "b") Nothing 1)
+        [ModConn $ Id def "c", ModConn $ Id def "a", ModConn $ Id def "b"],
+      Initial def $
+        SeqBlock def
+          [ BlockAssign def (Assign (RegId "a") Nothing 1),
+            BlockAssign def (Assign (RegId "b") Nothing 1)
           ]
     ]
     []
 
-addTestBench :: Monoid ann => Verilog ann -> Verilog ann
+addTestBench :: Annotation ann => Verilog ann -> Verilog ann
 addTestBench = addModDecl testBench
 
-defaultPort :: Monoid ann => Identifier -> Port ann
+defaultPort :: Annotation ann => Identifier -> Port ann
 defaultPort = Port Wire False (Range 1 0)
 
-portToExpr :: Monoid ann => Port ann -> Expr ann
-portToExpr (Port _ _ _ i) = Id mempty i
+portToExpr :: Annotation ann => Port ann -> Expr ann
+portToExpr (Port _ _ _ i) = Id def i
 
 modName :: ModDecl ann -> Text
 modName (ModDecl _ name _ _ _ _) = name.getIdentifier
 
-yPort :: Monoid ann => Identifier -> Port ann
+yPort :: Annotation ann => Identifier -> Port ann
 yPort = Port Wire False (Range 90 0)
 
 wire :: Range ann -> Identifier -> Port ann
