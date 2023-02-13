@@ -314,12 +314,12 @@ instance Annotated Range where
   setDefaultAnnotations (Range a b) = Range (setDefaultAnnotations a) (setDefaultAnnotations b)
 
 -- | Construct a range with the given number of bits
-rangeFromSize :: Annotation ann => BitVec -> Range ann
-rangeFromSize n = Range (ConstNum def (n - 1)) (ConstNum def 0)
+rangeFromSize :: Annotation ann => Integer -> Range ann
+rangeFromSize n = Range (ConstNum def (fromInteger n - 1)) (ConstNum def 0)
 
 -- | Get the number of bits in a range, if both ends are given as simple numbers
-simpleRangeToSize :: Range ann -> Maybe BitVec
-simpleRangeToSize (Range (ConstNum _ msb) (ConstNum _ lsb)) = Just (msb - lsb + 1)
+simpleRangeToSize :: Range ann -> Maybe Integer
+simpleRangeToSize (Range (ConstNum _ msb) (ConstNum _ lsb)) = Just (msb.value - lsb.value + 1)
 simpleRangeToSize _ = Nothing
 
 -- | Verilog expression, which can either be a primary expression, unary
