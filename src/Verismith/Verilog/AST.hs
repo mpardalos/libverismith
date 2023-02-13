@@ -93,6 +93,7 @@ module Verismith.Verilog.AST
     aModule,
     getModule,
     getSourceId,
+    topModuleId,
     mainModule,
   )
 where
@@ -107,7 +108,7 @@ import Data.String (IsString, fromString)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
-import Optics (Lens', Traversal', lens, traversed, (%), (%~), (&), (^..))
+import Optics (Lens', Traversal', lens, traversed, (%), (%~), (&), (.~), (^..))
 import Optics.TH
 import Verismith.Verilog.BitVec
 
@@ -965,6 +966,16 @@ aModule t = lens get_ set_
     get_ (SourceInfo _ main) =
       head . filter (f t.getIdentifier) $ main ^.. getModule
     f top (ModDecl _ (Identifier i) _ _ _ _) = i == top
+
+-- | Use this to change the name of the top module
+topModuleId :: Lens' (SourceInfo a) Identifier
+topModuleId = lens get_ set_
+  where
+    get_ src = Identifier src.top
+    set_ src n =
+      src
+        & mainModule % #id .~ n
+        & #top .~ n.getIdentifier
 
 -- | May need to change this to Traversal to be safe. For now it will fail when
 -- the main has not been properly set with.
