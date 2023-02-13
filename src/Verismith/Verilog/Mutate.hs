@@ -232,7 +232,7 @@ makeTopAssert = (#items %~ (++ [assert])) . makeTop False 2
 declareMod :: Annotation ann => [Port ann] -> ModDecl ann -> ModDecl ann
 declareMod ports = initMod . (#items %~ (fmap decl ports ++))
   where
-    decl p@(Port Reg _ _ _) = Decl def Nothing p (Just 0)
+    decl p@(Port Reg _ _ _) = Decl def Nothing p (Just (ConstNum def 0))
     decl p = Decl def Nothing p Nothing
 
 -- | Simplify an 'Expr' by using constants to remove 'BinaryOperator' and

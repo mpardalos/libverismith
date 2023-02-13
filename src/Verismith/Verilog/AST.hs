@@ -67,6 +67,8 @@ module Verismith.Verilog.AST
     constToExpr,
     exprToConst,
     Range (..),
+    rangeFromSize,
+    simpleRangeToSize,
 
     -- * Assignment
     Assign (..),
@@ -153,18 +155,9 @@ makePrismLabels ''Identifier
 -- | Verilog syntax for adding a delay, which is represented as @#num@.
 newtype Delay = Delay {_getDelay :: Int}
   deriving (Eq, Show, Ord, Data, Generic)
-  deriving newtype (NFData)
+  deriving newtype (NFData, Num)
 
 makePrismLabels ''Delay
-
-instance Num Delay where
-  Delay a + Delay b = Delay $ a + b
-  Delay a - Delay b = Delay $ a - b
-  Delay a * Delay b = Delay $ a * b
-  negate (Delay a) = Delay $ negate a
-  abs (Delay a) = Delay $ abs a
-  signum (Delay a) = Delay $ signum a
-  fromInteger = Delay . fromInteger
 
 -- | Binary operators that are currently supported in the verilog generation.
 data BinaryOperator
@@ -286,15 +279,6 @@ exprToConst (Cond ann a b c) = ConstCond ann (exprToConst a) (exprToConst b) $ e
 exprToConst (Str ann a) = ConstStr ann a
 exprToConst _ = error "Not a constant expression"
 
-instance Annotation ann => Num (ConstExpr ann) where
-  a + b = ConstBinOp def a BinPlus b
-  a - b = ConstBinOp def a BinMinus b
-  a * b = ConstBinOp def a BinTimes b
-  negate = ConstUnOp def UnMinus
-  abs = undefined
-  signum = undefined
-  fromInteger = ConstNum def . fromInteger
-
 instance (Annotation ann, Semigroup (AnnConstExpr ann)) => Semigroup (ConstExpr ann) where
   (ConstConcat ann1 a) <> (ConstConcat ann2 b) = ConstConcat (ann1 <> ann2) (a <> b)
   (ConstConcat ann a) <> b = ConstConcat ann $ a <> (b :| [])
@@ -302,7 +286,7 @@ instance (Annotation ann, Semigroup (AnnConstExpr ann)) => Semigroup (ConstExpr 
   a <> b = ConstConcat def $ a <| b :| []
 
 instance (Annotation ann, Semigroup (AnnConstExpr ann)) => Monoid (ConstExpr ann) where
-  mempty = 0
+  mempty = ConstNum def 0
 
 instance Annotation ann => IsString (ConstExpr ann) where
   fromString = ConstStr def . fromString
@@ -329,14 +313,14 @@ deriving instance (AnnConstraint Generic ann, AnnConstraint NFData ann) => NFDat
 instance Annotated Range where
   setDefaultAnnotations (Range a b) = Range (setDefaultAnnotations a) (setDefaultAnnotations b)
 
-instance Annotation ann => Num (Range ann) where
-  (Range s1 a) + (Range s2 b) = Range (s1 + s2) (a + b)
-  (Range s1 a) - (Range s2 b) = Range (s1 - s2) (a - b)
-  (Range s1 a) * (Range s2 b) = Range (s1 * s2) (a * b)
-  negate = undefined
-  abs = id
-  signum _ = 1
-  fromInteger = flip Range 0 . fromInteger . (-) 1
+-- | Construct a range with the given number of bits
+rangeFromSize :: Annotation ann => BitVec -> Range ann
+rangeFromSize n = Range (ConstNum def (n - 1)) (ConstNum def 0)
+
+-- | Get the number of bits in a range, if both ends are given as simple numbers
+simpleRangeToSize :: Range ann -> Maybe BitVec
+simpleRangeToSize (Range (ConstNum _ msb) (ConstNum _ lsb)) = Just (msb - lsb + 1)
+simpleRangeToSize _ = Nothing
 
 -- | Verilog expression, which can either be a primary expression, unary
 -- expression, binary operator expression or a conditional expression.
@@ -408,15 +392,6 @@ instance
   getField (CondF ann _ _ _) = ann
   getField (ApplF ann _ _) = ann
   getField (StrF ann _) = ann
-
-instance Annotation ann => Num (Expr ann) where
-  a + b = BinOp def a BinPlus b
-  a - b = BinOp def a BinMinus b
-  a * b = BinOp def a BinTimes b
-  negate = UnOp def UnMinus
-  abs = undefined
-  signum = undefined
-  fromInteger = Number def . fromInteger
 
 instance (Semigroup (AnnExpr ann), Annotation ann) => Semigroup (Expr ann) where
   (Concat ann1 a) <> (Concat ann2 b) = Concat (ann1 <> ann2) (a <> b)

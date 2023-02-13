@@ -89,7 +89,7 @@ import Control.Monad.State.Strict
 import Data.Foldable (fold)
 import Data.Functor.Foldable (cata)
 import Data.List (foldl', partition)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromJust, fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics (Generic)
@@ -264,9 +264,6 @@ toPort ident = do
   i <- range
   return $ wire i ident
 
-sumSize :: [Port ()] -> Range ()
-sumSize ps = sum $ ps ^.. traversed % #size
-
 random :: (MonadGen m) => [Port ()] -> (Expr () -> ContAssign ()) -> m (ModItem ())
 random ctx fun = do
   expr <- Hog.sized (exprWithContext (ProbExpr 1 1 0 1 1 1 1 0 1 1) [] ctx)
@@ -287,7 +284,12 @@ randomMod inps total = do
   let inputs_ = take inps ident
   let other = drop inps ident
   let y = ModCA () . ContAssign "y" . fold $ Id () <$> drop inps ids
-  let yport = [wire (sumSize other) "y"]
+  let ysize =
+        rangeFromSize
+          . sum
+          . map (fromJust . simpleRangeToSize)
+          $ other ^.. traversed % #size
+  let yport = [wire ysize "y"]
   return . declareMod other $
     ModDecl
       ()
@@ -325,7 +327,7 @@ wireSize = Hog.int $ Hog.linear 2 100
 
 -- | Generates a random range by using the 'wireSize' and 0 as the lower bound.
 range :: (MonadGen m) => m (Range ())
-range = Range <$> fmap fromIntegral wireSize <*> pure 0
+range = rangeFromSize . fromIntegral <$> wireSize
 
 -- | Generate a random bit vector using 'largeNum'.
 genBitVec :: (MonadGen m) => m BitVec
@@ -446,8 +448,8 @@ rangeSelect ps ports = do
   return $
     RangeSelect () p.name $
       Range
-        (fromIntegral msb)
-        (fromIntegral lsb)
+        (ConstNum def (fromIntegral msb))
+        (ConstNum def (fromIntegral lsb))
 
 -- | Generate a random expression from the 'Context' with a guarantee that it
 -- will terminate using the list of safe 'Expr'.
@@ -632,9 +634,9 @@ forLoop = do
   var <- lvalFromPort <$> nextBPort (Just "forvar")
   ForLoop
     ()
-    (Assign var Nothing 0)
-    (BinOp () (varId var) BinLT $ fromIntegral num)
-    (Assign var Nothing $ BinOp () (varId var) BinPlus 1)
+    (Assign var Nothing (Number def 0))
+    (BinOp () (varId var) BinLT $ Number def (fromIntegral num))
+    (Assign var Nothing $ BinOp () (varId var) BinPlus (Number def 1))
     <$> seqBlock
   where
     varId v = Id () (v ^?! #_RegId)
@@ -865,16 +867,18 @@ moduleDef top = do
   vars <- shareableVariables
   config <- ask
   let (newPorts, localPorts) = partition (`identElem` portList) $ vars <> context.outofscope
+  -- TODO: Make this total. It currently fails when localPorts have sizes which include expressions
   let size =
-        evalRange context.parameters 32
+        rangeFromSize
           . sum
+          . map (fromJust . simpleRangeToSize)
           $ localPorts ^.. traversed % #size
   let (ProbMod n s) = config.probability.mod
   newlocal <- selectwfreq s n localPorts
-  let clock = Port Wire False 1 "clk"
+  let clock = Port Wire False (rangeFromSize 1) "clk"
   let combine = config.property.combine
   let yport =
-        if combine then Port Wire False 1 "y" else Port Wire False size "y"
+        if combine then Port Wire False (rangeFromSize 1) "y" else Port Wire False size "y"
   let comb = combineAssigns_ combine yport newlocal
   return
     . declareMod localPorts

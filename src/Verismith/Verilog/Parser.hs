@@ -302,7 +302,7 @@ parseNetDecl :: Maybe PortDir -> Parser (ModItem ())
 parseNetDecl pd = do
   t <- option Wire type_
   sign <- option False (tok KWSigned $> True)
-  range <- option 1 parseRange
+  range <- option (rangeFromSize 1) parseRange
   name <- identifier
   i <- option Nothing (fmap Just (tok' SymEq *> parseConstExpr))
   tok' SymSemi

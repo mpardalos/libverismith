@@ -31,10 +31,10 @@ import Data.Text (Text)
 import Verismith.Verilog.AST
 
 regDecl :: Annotation ann => Identifier -> ModItem ann
-regDecl i = Decl def Nothing (Port Reg False (Range 1 0) i) Nothing
+regDecl i = Decl def Nothing (Port Reg False (rangeFromSize 2) i) Nothing
 
 wireDecl :: Annotation ann => Identifier -> ModItem ann
-wireDecl i = Decl def Nothing (Port Wire False (Range 1 0) i) Nothing
+wireDecl i = Decl def Nothing (Port Wire False (rangeFromSize 2) i) Nothing
 
 -- | Create an empty module.
 emptyMod :: Annotation ann => ModDecl ann
@@ -69,8 +69,8 @@ testBench =
         [ModConn $ Id def "c", ModConn $ Id def "a", ModConn $ Id def "b"],
       Initial def $
         SeqBlock def
-          [ BlockAssign def (Assign (RegId "a") Nothing 1),
-            BlockAssign def (Assign (RegId "b") Nothing 1)
+          [ BlockAssign def (Assign (RegId "a") Nothing (Number def 1)),
+            BlockAssign def (Assign (RegId "b") Nothing (Number def 1))
           ]
     ]
     []
@@ -79,7 +79,7 @@ addTestBench :: Annotation ann => Verilog ann -> Verilog ann
 addTestBench = addModDecl testBench
 
 defaultPort :: Annotation ann => Identifier -> Port ann
-defaultPort = Port Wire False (Range 1 0)
+defaultPort = Port Wire False (rangeFromSize 2)
 
 portToExpr :: Annotation ann => Port ann -> Expr ann
 portToExpr (Port _ _ _ i) = Id def i
@@ -88,7 +88,7 @@ modName :: ModDecl ann -> Text
 modName (ModDecl _ name _ _ _ _) = name.getIdentifier
 
 yPort :: Annotation ann => Identifier -> Port ann
-yPort = Port Wire False (Range 90 0)
+yPort = Port Wire False (rangeFromSize 91)
 
 wire :: Range ann -> Identifier -> Port ann
 wire = Port Wire False
