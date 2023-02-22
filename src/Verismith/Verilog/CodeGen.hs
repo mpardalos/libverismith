@@ -39,15 +39,15 @@ class Source a where
 
 -- | Map a 'Maybe (Statement ann)' to 'Text'. If it is 'Just statement', the generated
 -- statements are returned. If it is 'Nothing', then @;\n@ is returned.
-defMap :: Maybe (Statement ann) -> Doc a
+defMap :: Annotation ann => Maybe (Statement ann) -> Doc a
 defMap = maybe semi statement
 
 -- | Convert the 'Verilog ann' type to 'Text' so that it can be rendered.
-verilogSrc :: Show (AnnModDecl ann) => Verilog ann -> Doc a
+verilogSrc :: Annotation ann => Verilog ann -> Doc a
 verilogSrc (Verilog modules) = vsep . punctuate line $ moduleDecl <$> modules
 
 -- | Generate the 'ModDecl ann' for a module and convert it to 'Text'.
-moduleDecl :: Show (AnnModDecl ann) => ModDecl ann -> Doc a
+moduleDecl :: Annotation ann => ModDecl ann -> Doc a
 moduleDecl (ModDecl ann i outP inP items ps) =
   vsep
     [ hsep ["/*", pretty $ show ann, "*/"],
@@ -112,7 +112,7 @@ portDir PortOut = "output"
 portDir PortInOut = "inout"
 
 -- | Generate a '(ModItem ann)'.
-moduleItem :: ModItem ann -> Doc a
+moduleItem :: Annotation ann => ModItem ann -> Doc a
 moduleItem (ModCA _ ca) = contAssign ca
 moduleItem (ModInst _ i param name conn) =
   (<> semi) $
@@ -141,28 +141,31 @@ moduleItem (Property _ l e bl br) =
                Nothing -> expr br, semi]
       ]
 
-mConn :: ModConn ann -> Doc a
+mConn :: Annotation ann => ModConn ann -> Doc a
 mConn (ModConn c) = expr c
 mConn (ModConnNamed n c) = hcat [dot, identifier n, parens $ expr c]
 
 -- | Generate continuous assignment
-contAssign :: ContAssign ann -> Doc a
+contAssign :: Annotation ann => ContAssign ann -> Doc a
 contAssign (ContAssign val e) =
   (<> semi) $ hsep ["assign", identifier val, "=", align $ expr e]
 
+ann :: Show a => a -> Doc b
+ann a = hsep ["/*", pretty (show a), "*/"]
+
 -- | Generate 'Expr' to 'Text'.
-expr :: Expr ann -> Doc a
-expr (BinOp _ eRhs bin eLhs) = parens $ hsep [expr eRhs, binaryOp bin, expr eLhs]
-expr (Number _ b) = showNum b
-expr (Id _ i) = identifier i
-expr (VecSelect _ i e) = hcat [identifier i, brackets $ expr e]
-expr (RangeSelect _ i r) = hcat [identifier i, range r]
-expr (Concat _ c) = braces . nest 4 . sep . punctuate comma $ toList (expr <$> c)
-expr (UnOp _ u e) = parens $ hcat [unaryOp u, expr e]
-expr (Cond _ l t f) =
-  parens . nest 4 $ sep [expr l <+> "?", hsep [expr t, colon, expr f]]
-expr (Appl _ f e) = hcat [identifier f, parens $ expr e]
-expr (Str _ t) = dquotes $ pretty t
+expr :: Annotation ann => Expr ann -> Doc a
+expr (BinOp eAnn eRhs bin eLhs) = parens $ hsep [ann eAnn, expr eRhs, binaryOp bin, expr eLhs]
+expr (Number eAnn b) = parens $ ann eAnn <+> showNum b
+expr (Id eAnn i) = parens $ ann eAnn <+> identifier i
+expr (VecSelect eAnn i e) = parens $ ann eAnn <+> hcat [identifier i, brackets $ expr e]
+expr (RangeSelect eAnn i r) = parens $ ann eAnn <+> hcat [identifier i, range r]
+expr (Concat eAnn c) = parens $ ann eAnn <+> (braces . nest 4 . sep . punctuate comma $ toList (expr <$> c))
+expr (UnOp eAnn u e) = parens $ ann eAnn <+> hcat [unaryOp u, expr e]
+expr (Cond eAnn l t f) =
+  parens . nest 4 $ sep [ann eAnn, expr l <+> "?", hsep [expr t, colon, expr f]]
+expr (Appl eAnn f e) = parens $ ann eAnn <+> hcat [identifier f, parens $ expr e]
+expr (Str eAnn t) = parens (ann eAnn <+> dquotes (pretty t))
 
 showNum :: BitVec -> Doc a
 showNum (BitVec s n) =
@@ -227,11 +230,11 @@ unaryOp UnXor = "^"
 unaryOp UnNxor = "~^"
 unaryOp UnNxorInv = "^~"
 
-event :: Event ann -> Doc a
+event :: Annotation ann => Event ann -> Doc a
 event a = hcat ["@", parens $ eventRec a]
 
 -- | Generate verilog code for an 'Event'.
-eventRec :: Event ann -> Doc a
+eventRec :: Annotation ann => Event ann -> Doc a
 eventRec (EId i) = identifier i
 eventRec (EExpr e) = expr e
 eventRec EAll = "*"
@@ -245,7 +248,7 @@ delay :: Delay -> Doc a
 delay (Delay i) = "#" <> pretty i
 
 -- | Generate the verilog code for an 'LVal'.
-lVal :: LVal ann -> Doc a
+lVal :: Annotation ann => LVal ann -> Doc a
 lVal (RegId i) = identifier i
 lVal (RegExpr i e) = hsep [identifier i, expr e]
 lVal (RegSize i r) = hsep [identifier i, range r]
@@ -255,7 +258,7 @@ pType :: PortType -> Doc a
 pType Wire = "wire"
 pType Reg = "reg"
 
-genAssign :: Text -> Assign ann -> Doc a
+genAssign :: Annotation ann => Text -> Assign ann -> Doc a
 genAssign op (Assign r d e) =
   hsep . (lVal r :) . (pretty op :) $ addMay (delay <$> d) [expr e]
 
@@ -264,11 +267,11 @@ caseType CaseStandard = "case"
 caseType CaseX = "casex"
 caseType CaseZ = "casez"
 
-casePair :: CasePair ann -> Doc a
+casePair :: Annotation ann => CasePair ann -> Doc a
 casePair (CasePair e s) =
   vsep [hsep [expr e, colon], indent 2 $ statement s]
 
-statement :: Statement ann -> Doc a
+statement :: Annotation ann => Statement ann -> Doc a
 statement (TimeCtrl _ d stat) = hsep [delay d, defMap stat]
 statement (EventCtrl _ e stat) = hsep [event e, defMap stat]
 statement (SeqBlock _ s) =
@@ -306,7 +309,7 @@ statement (ForLoop _ a e incr stmnt) =
     ]
 -- statement (StmntAnn a s) = sep [hsep ["/*", pretty $ show a, "*/"], statement s]
 
-task :: Task ann -> Doc a
+task :: Annotation ann => Task ann -> Doc a
 task (Task i e)
   | null e = identifier i
   | otherwise =
@@ -322,37 +325,37 @@ render = print . genSource
 instance Source Identifier where
   genSource = showT . identifier
 
-instance Source (Task ann) where
+instance Annotation ann => Source (Task ann) where
   genSource = showT . task
 
-instance Source (Statement ann) where
+instance Annotation ann => Source (Statement ann) where
   genSource = showT . statement
 
 instance Source PortType where
   genSource = showT . pType
 
-instance Source (ConstExpr ann) where
+instance Annotation ann => Source (ConstExpr ann) where
   genSource = showT . constExpr
 
-instance Source (LVal ann) where
+instance Annotation ann => Source (LVal ann) where
   genSource = showT . lVal
 
 instance Source Delay where
   genSource = showT . delay
 
-instance Source (Event ann) where
+instance Annotation ann => Source (Event ann) where
   genSource = showT . event
 
 instance Source UnaryOperator where
   genSource = showT . unaryOp
 
-instance Source (Expr ann) where
+instance Annotation ann => Source (Expr ann) where
   genSource = showT . expr
 
-instance Source (ContAssign ann) where
+instance Annotation ann => Source (ContAssign ann) where
   genSource = showT . contAssign
 
-instance Source (ModItem ann) where
+instance Annotation ann => Source (ModItem ann) where
   genSource = showT . moduleItem
 
 instance Source PortDir where
@@ -361,13 +364,13 @@ instance Source PortDir where
 instance Source (Port ann) where
   genSource = showT . port
 
-instance Show (AnnModDecl ann) => Source (ModDecl ann) where
+instance Annotation ann => Source (ModDecl ann) where
   genSource = showT . moduleDecl
 
-instance Show (AnnModDecl ann) => Source (Verilog ann) where
+instance Annotation ann => Source (Verilog ann) where
   genSource = showT . verilogSrc
 
-instance Show (AnnModDecl ann) => Source (SourceInfo ann) where
+instance Annotation ann => Source (SourceInfo ann) where
   genSource (SourceInfo _ src) = genSource src
 
 newtype GenVerilog a = GenVerilog {unGenVerilog :: a}

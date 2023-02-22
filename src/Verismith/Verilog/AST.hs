@@ -115,6 +115,7 @@ import Verismith.Verilog.BitVec
 class
   ( AnnConstraint Default ann,
     AnnConstraint Data ann,
+    AnnConstraint Show ann,
     Typeable ann,
     Typeable k
   ) =>
