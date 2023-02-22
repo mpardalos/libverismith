@@ -169,7 +169,6 @@ expr (Str eAnn t) = parens (ann eAnn <+> dquotes (pretty t))
 
 showNum :: BitVec -> Doc a
 showNum (BitVec s n) =
-  parens $
     hcat [minus, pretty $ showT s, "'h", pretty $ T.pack (showHex (abs n) "")]
   where
     minus
