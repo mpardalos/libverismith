@@ -84,6 +84,7 @@ module Verismith.Generate
   )
 where
 
+import Control.Monad (replicateM)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable (fold)
