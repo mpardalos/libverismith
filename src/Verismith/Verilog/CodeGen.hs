@@ -163,7 +163,7 @@ expr (RangeSelect eAnn i r) = parens $ ann eAnn <+> hcat [identifier i, range r]
 expr (Concat eAnn c) = parens $ ann eAnn <+> (braces . nest 4 . sep . punctuate comma $ toList (expr <$> c))
 expr (UnOp eAnn u e) = parens $ ann eAnn <+> hcat [unaryOp u, expr e]
 expr (Cond eAnn l t f) =
-  parens . nest 4 $ sep [ann eAnn, expr l <+> "?", hsep [expr t, colon, expr f]]
+  parens . nest 4 $ sep [ann eAnn, expr l, "?" <+> expr t, colon <+> expr f]
 expr (Appl eAnn f e) = parens $ ann eAnn <+> hcat [identifier f, parens $ expr e]
 expr (Str eAnn t) = parens (ann eAnn <+> dquotes (pretty t))
 
